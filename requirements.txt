@@ -1,0 +1,14 @@
+numpy
+pandas
+requests
+joblib
+python-dotenv
+scikit-learn
+SQLAlchemy>=2.0
+psycopg2-binary
+openpyxl
+
+# Opcional: melhora o forecast em ForecastVolume.prever_prophet.
+# Sem este pacote instalado, o agente cai automaticamente no fallback
+# de média móvel (prever_media_movel) sem gerar erro.
+# prophet
