@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/providers/trpc";
+import type { Ticket as TicketRow } from "@db/schema";
 import {
   Plus,
   Search,
@@ -119,7 +120,7 @@ export default function Tickets() {
     setModalOpen(true);
   };
 
-  const openEditModal = (ticket: any) => {
+  const openEditModal = (ticket: TicketRow) => {
     setEditId(ticket.id);
     setForm({
       title: ticket.title,
@@ -362,7 +363,7 @@ export default function Tickets() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-sm text-[#94A3B8]">Categoria</Label>
-                <Select value={form.category} onValueChange={(v: any) => setForm({ ...form, category: v })}>
+                <Select value={form.category} onValueChange={(v: TicketForm["category"]) => setForm({ ...form, category: v })}>
                   <SelectTrigger className="mt-1 bg-[#1A1A1A] border-[#27272A] text-[#F8FAFC]">
                     <SelectValue />
                   </SelectTrigger>
@@ -378,7 +379,7 @@ export default function Tickets() {
               </div>
               <div>
                 <Label className="text-sm text-[#94A3B8]">Prioridade</Label>
-                <Select value={form.priority} onValueChange={(v: any) => setForm({ ...form, priority: v })}>
+                <Select value={form.priority} onValueChange={(v: TicketForm["priority"]) => setForm({ ...form, priority: v })}>
                   <SelectTrigger className="mt-1 bg-[#1A1A1A] border-[#27272A] text-[#F8FAFC]">
                     <SelectValue />
                   </SelectTrigger>
@@ -394,7 +395,7 @@ export default function Tickets() {
             {editId && (
               <div>
                 <Label className="text-sm text-[#94A3B8]">Status</Label>
-                <Select value={form.status} onValueChange={(v: any) => setForm({ ...form, status: v })}>
+                <Select value={form.status} onValueChange={(v: TicketForm["status"]) => setForm({ ...form, status: v })}>
                   <SelectTrigger className="mt-1 bg-[#1A1A1A] border-[#27272A] text-[#F8FAFC]">
                     <SelectValue />
                   </SelectTrigger>

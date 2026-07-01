@@ -1,4 +1,4 @@
-import { createRouter, publicQuery } from "./middleware";
+import { createRouter, authedQuery } from "./middleware";
 import { getDb } from "./queries/connection";
 import { chatConversations, chatMessages, tickets } from "@db/schema";
 import { desc, eq } from "drizzle-orm";
@@ -21,7 +21,7 @@ const aiResponses: Record<string, string> = {
   ticket: `Vou criar um ticket para você. Por favor, forneça:\n\n1. **Título resumido** do problema\n2. **Descrição detalhada** com:\n   - O que está acontecendo\n   - Quando começou\n   - Quem está afetado\n   - Tentativas de resolução\n3. **Categoria** (Hardware/Software/Rede/Segurança/Acesso/Outro)\n4. **Prioridade** (Baixa/Média/Alta/Crítica)\n\nCom essas informações, registrarei o chamado e encaminharei para a equipe responsável.`,
 };
 
-function getAIResponse(message: string): string {
+export function getAIResponse(message: string): string {
   const lower = message.toLowerCase();
 
   if (lower.includes("servidor") || lower.includes("server") || lower.includes("reiniciar")) {
@@ -47,7 +47,7 @@ function getAIResponse(message: string): string {
 }
 
 export const chatRouter = createRouter({
-  getConversations: publicQuery.query(async () => {
+  getConversations: authedQuery.query(async () => {
     const db = getDb();
     return db
       .select()
@@ -55,7 +55,7 @@ export const chatRouter = createRouter({
       .orderBy(desc(chatConversations.updatedAt));
   }),
 
-  createConversation: publicQuery
+  createConversation: authedQuery
     .input(z.object({ title: z.string().optional() }).optional())
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -74,7 +74,7 @@ export const chatRouter = createRouter({
       return { id: convId };
     }),
 
-  getHistory: publicQuery
+  getHistory: authedQuery
     .input(z.object({ conversationId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -85,7 +85,7 @@ export const chatRouter = createRouter({
         .orderBy(chatMessages.createdAt);
     }),
 
-  sendMessage: publicQuery
+  sendMessage: authedQuery
     .input(
       z.object({
         conversationId: z.number(),
@@ -122,7 +122,7 @@ export const chatRouter = createRouter({
       return { response: aiResponse };
     }),
 
-  createTicketFromChat: publicQuery
+  createTicketFromChat: authedQuery
     .input(z.object({ conversationId: z.number() }))
     .mutation(async ({ input }) => {
       const db = getDb();

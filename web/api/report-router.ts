@@ -1,11 +1,11 @@
-import { createRouter, publicQuery } from "./middleware";
+import { createRouter, authedQuery } from "./middleware";
 import { getDb } from "./queries/connection";
 import { tickets, incidents } from "@db/schema";
 import { sql, eq } from "drizzle-orm";
 import { z } from "zod";
 
 export const reportRouter = createRouter({
-  ticketVolume: publicQuery
+  ticketVolume: authedQuery
     .input(
       z.object({
         days: z.number().default(7),
@@ -43,7 +43,7 @@ export const reportRouter = createRouter({
       return results;
     }),
 
-  resolutionTime: publicQuery.query(async () => {
+  resolutionTime: authedQuery.query(async () => {
     const db = getDb();
 
     const categories = ["hardware", "software", "network", "security", "access", "other"] as const;
@@ -66,7 +66,7 @@ export const reportRouter = createRouter({
     return results;
   }),
 
-  priorityDistribution: publicQuery.query(async () => {
+  priorityDistribution: authedQuery.query(async () => {
     const db = getDb();
 
     const results = await db
@@ -80,7 +80,7 @@ export const reportRouter = createRouter({
     return results;
   }),
 
-  incidentStatus: publicQuery.query(async () => {
+  incidentStatus: authedQuery.query(async () => {
     const db = getDb();
 
     const results = await db
@@ -94,7 +94,7 @@ export const reportRouter = createRouter({
     return results;
   }),
 
-  summary: publicQuery
+  summary: authedQuery
     .input(
       z.object({
         days: z.number().default(30),

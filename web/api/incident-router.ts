@@ -1,11 +1,11 @@
-import { createRouter, publicQuery } from "./middleware";
+import { createRouter, authedQuery } from "./middleware";
 import { getDb } from "./queries/connection";
 import { incidents } from "@db/schema";
 import { desc, eq, and } from "drizzle-orm";
 import { z } from "zod";
 
 export const incidentRouter = createRouter({
-  list: publicQuery
+  list: authedQuery
     .input(
       z.object({
         status: z.string().optional(),
@@ -33,7 +33,7 @@ export const incidentRouter = createRouter({
         .orderBy(desc(incidents.createdAt));
     }),
 
-  create: publicQuery
+  create: authedQuery
     .input(
       z.object({
         title: z.string().min(1),
@@ -49,7 +49,7 @@ export const incidentRouter = createRouter({
       return { id: Number(result.insertId) };
     }),
 
-  update: publicQuery
+  update: authedQuery
     .input(
       z.object({
         id: z.number(),
@@ -67,7 +67,7 @@ export const incidentRouter = createRouter({
       return { success: true };
     }),
 
-  delete: publicQuery
+  delete: authedQuery
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const db = getDb();

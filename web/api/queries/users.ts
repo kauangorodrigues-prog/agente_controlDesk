@@ -13,6 +13,10 @@ export async function findUserByUnionId(unionId: string) {
   return rows.at(0);
 }
 
+export async function updateUserName(id: number, name: string) {
+  await getDb().update(schema.users).set({ name }).where(eq(schema.users.id, id));
+}
+
 export async function upsertUser(data: InsertUser) {
   const values = { ...data };
   const updateSet: Partial<InsertUser> = {

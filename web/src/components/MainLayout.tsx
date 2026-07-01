@@ -30,13 +30,21 @@ const navItems = [
 export default function MainLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, isLoading } = useAuth({ redirectOnUnauthenticated: true });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   const isActive = (path: string) => location.pathname === path;
 
   const pageTitle = navItems.find((item) => isActive(item.path))?.label ?? "NexusAI";
+
+  if (isLoading || !user) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#0A0A0A]">
+        <div className="w-8 h-8 border-2 border-[#F97316] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-[#0A0A0A] text-[#F8FAFC] overflow-hidden">

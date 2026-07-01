@@ -1,5 +1,4 @@
 import { Routes, Route } from 'react-router'
-import { TRPCProvider } from '@/providers/trpc'
 import Login from './pages/Login'
 import NotFound from './pages/NotFound'
 import Dashboard from './pages/Dashboard'
@@ -12,20 +11,18 @@ import MainLayout from './components/MainLayout'
 
 export default function App() {
   return (
-    <TRPCProvider>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route element={<MainLayout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/tickets" element={<Tickets />} />
-          <Route path="/chat" element={<ChatIA />} />
-          <Route path="/incidentes" element={<Incidentes />} />
-          <Route path="/relatorios" element={<Relatorios />} />
-          <Route path="/configuracoes" element={<Configuracoes />} />
-        </Route>
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </TRPCProvider>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route element={<MainLayout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/tickets" element={<Tickets />} />
+        <Route path="/chat" element={<ChatIA />} />
+        <Route path="/incidentes" element={<Incidentes />} />
+        <Route path="/relatorios" element={<Relatorios />} />
+        <Route path="/configuracoes" element={<Configuracoes />} />
+      </Route>
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   )
 }

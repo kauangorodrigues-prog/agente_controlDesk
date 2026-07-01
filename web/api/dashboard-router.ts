@@ -1,26 +1,29 @@
-import { createRouter, publicQuery } from "./middleware";
+import { createRouter, authedQuery } from "./middleware";
 import { getDb } from "./queries/connection";
 import { tickets, incidents } from "@db/schema";
 import { sql, desc, eq } from "drizzle-orm";
 
 export const dashboardRouter = createRouter({
-  stats: publicQuery.query(async () => {
+  stats: authedQuery.query(async () => {
     const db = getDb();
 
     const totalTickets = await db.select({ count: sql<number>`count(*)` }).from(tickets);
     const openTickets = await db.select({ count: sql<number>`count(*)` }).from(tickets).where(eq(tickets.status, "open"));
-    const resolvedTickets = await db.select({ count: sql<number>`count(*)` }).from(tickets).where(eq(tickets.status, "resolved"));
+    const resolvedToday = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(tickets)
+      .where(sql`status = 'resolved' AND DATE(resolvedAt) = CURDATE()`);
     const criticalIncidents = await db.select({ count: sql<number>`count(*)` }).from(incidents).where(eq(incidents.priority, "critical"));
 
     return {
       totalTickets: totalTickets[0]?.count ?? 0,
       openTickets: openTickets[0]?.count ?? 0,
-      resolvedToday: resolvedTickets[0]?.count ?? 0,
+      resolvedToday: resolvedToday[0]?.count ?? 0,
       criticalIncidents: criticalIncidents[0]?.count ?? 0,
     };
   }),
 
-  ticketTrend: publicQuery.query(async () => {
+  ticketTrend: authedQuery.query(async () => {
     const db = getDb();
 
     const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -45,7 +48,7 @@ export const dashboardRouter = createRouter({
     return results;
   }),
 
-  ticketsByCategory: publicQuery.query(async () => {
+  ticketsByCategory: authedQuery.query(async () => {
     const db = getDb();
 
     const results = await db
@@ -59,7 +62,7 @@ export const dashboardRouter = createRouter({
     return results;
   }),
 
-  ticketsByStatus: publicQuery.query(async () => {
+  ticketsByStatus: authedQuery.query(async () => {
     const db = getDb();
 
     const results = await db
@@ -73,7 +76,7 @@ export const dashboardRouter = createRouter({
     return results;
   }),
 
-  recentTickets: publicQuery.query(async () => {
+  recentTickets: authedQuery.query(async () => {
     const db = getDb();
 
     return db
@@ -83,7 +86,7 @@ export const dashboardRouter = createRouter({
       .limit(5);
   }),
 
-  systemStatus: publicQuery.query(async () => {
+  systemStatus: authedQuery.query(async () => {
     return [
       { name: "API Gateway", status: "operational" as const, uptime: "99.9%" },
       { name: "Banco de Dados", status: "operational" as const, uptime: "99.7%" },
