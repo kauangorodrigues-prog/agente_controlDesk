@@ -13,6 +13,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import {
   AreaChart,
@@ -75,32 +76,32 @@ export default function Dashboard() {
       title: "Total de Tickets",
       value: stats?.totalTickets ?? 0,
       icon: Ticket,
-      trend: "+12%",
-      trendUp: true,
+      trend: stats?.trends.totalTickets.trend ?? "—",
+      trendUp: stats?.trends.totalTickets.trendUp ?? true,
       color: COLORS.orange,
     },
     {
       title: "Tickets Abertos",
       value: stats?.openTickets ?? 0,
       icon: AlertCircle,
-      trend: "-5%",
-      trendUp: false,
+      trend: stats?.trends.openTickets.trend ?? "—",
+      trendUp: stats?.trends.openTickets.trendUp ?? true,
       color: COLORS.yellow,
     },
     {
       title: "Resolvidos Hoje",
       value: stats?.resolvedToday ?? 0,
       icon: CheckCircle2,
-      trend: "+8%",
-      trendUp: true,
+      trend: stats?.trends.resolvedToday.trend ?? "—",
+      trendUp: stats?.trends.resolvedToday.trendUp ?? true,
       color: COLORS.green,
     },
     {
       title: "Incidentes Críticos",
       value: stats?.criticalIncidents ?? 0,
       icon: ShieldAlert,
-      trend: "-2",
-      trendUp: true,
+      trend: stats?.trends.criticalIncidents.trend ?? "—",
+      trendUp: stats?.trends.criticalIncidents.trendUp ?? true,
       color: COLORS.red,
     },
   ];
@@ -191,8 +192,14 @@ export default function Dashboard() {
               <p className="text-xs text-[#64748B]">Últimos 7 dias</p>
             </div>
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-[#22C55E]" />
-              <span className="text-xs text-[#22C55E]">+5.2%</span>
+              {stats?.trends.totalTickets.trendUp === false ? (
+                <TrendingDown className="w-4 h-4 text-[#EF4444]" />
+              ) : (
+                <TrendingUp className="w-4 h-4 text-[#22C55E]" />
+              )}
+              <span className={stats?.trends.totalTickets.trendUp === false ? "text-xs text-[#EF4444]" : "text-xs text-[#22C55E]"}>
+                {stats?.trends.totalTickets.trend ?? "—"}
+              </span>
             </div>
           </div>
           <div className="h-[260px]">

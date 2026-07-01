@@ -3,23 +3,78 @@ import { getDb } from "./queries/connection";
 import { tickets, incidents } from "@db/schema";
 import { sql, desc, eq } from "drizzle-orm";
 
+type Trend = { trend: string; trendUp: boolean };
+
+function pctChange(current: number, previous: number): Trend {
+  if (previous === 0) {
+    return current > 0 ? { trend: "+100%", trendUp: true } : { trend: "0%", trendUp: true };
+  }
+  const pct = Math.round(((current - previous) / previous) * 100);
+  return { trend: `${pct >= 0 ? "+" : ""}${pct}%`, trendUp: pct >= 0 };
+}
+
+async function count(
+  db: ReturnType<typeof getDb>,
+  table: typeof tickets | typeof incidents,
+  where: ReturnType<typeof sql>,
+) {
+  const rows = await db.select({ count: sql<number>`count(*)` }).from(table).where(where);
+  return rows[0]?.count ?? 0;
+}
+
 export const dashboardRouter = createRouter({
   stats: authedQuery.query(async () => {
     const db = getDb();
 
     const totalTickets = await db.select({ count: sql<number>`count(*)` }).from(tickets);
     const openTickets = await db.select({ count: sql<number>`count(*)` }).from(tickets).where(eq(tickets.status, "open"));
-    const resolvedToday = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(tickets)
-      .where(sql`status = 'resolved' AND DATE(resolvedAt) = CURDATE()`);
+    const resolvedTodayCount = await count(db, tickets, sql`status = 'resolved' AND DATE(resolvedAt) = CURDATE()`);
+    const resolvedYesterdayCount = await count(
+      db,
+      tickets,
+      sql`status = 'resolved' AND DATE(resolvedAt) = CURDATE() - INTERVAL 1 DAY`,
+    );
     const criticalIncidents = await db.select({ count: sql<number>`count(*)` }).from(incidents).where(eq(incidents.priority, "critical"));
+
+    // Trends compare the last 7 days against the 7 days before that, using
+    // creation timestamps (the only history we actually store — current
+    // status/priority is mutable and has no snapshot history to diff against).
+    const newTicketsThisWeek = await count(db, tickets, sql`createdAt >= NOW() - INTERVAL 7 DAY`);
+    const newTicketsPrevWeek = await count(
+      db,
+      tickets,
+      sql`createdAt >= NOW() - INTERVAL 14 DAY AND createdAt < NOW() - INTERVAL 7 DAY`,
+    );
+
+    const newOpenThisWeek = await count(db, tickets, sql`status = 'open' AND createdAt >= NOW() - INTERVAL 7 DAY`);
+    const newOpenPrevWeek = await count(
+      db,
+      tickets,
+      sql`status = 'open' AND createdAt >= NOW() - INTERVAL 14 DAY AND createdAt < NOW() - INTERVAL 7 DAY`,
+    );
+
+    const newCriticalThisWeek = await count(
+      db,
+      incidents,
+      sql`priority = 'critical' AND createdAt >= NOW() - INTERVAL 7 DAY`,
+    );
+    const newCriticalPrevWeek = await count(
+      db,
+      incidents,
+      sql`priority = 'critical' AND createdAt >= NOW() - INTERVAL 14 DAY AND createdAt < NOW() - INTERVAL 7 DAY`,
+    );
 
     return {
       totalTickets: totalTickets[0]?.count ?? 0,
       openTickets: openTickets[0]?.count ?? 0,
-      resolvedToday: resolvedToday[0]?.count ?? 0,
+      resolvedToday: resolvedTodayCount,
       criticalIncidents: criticalIncidents[0]?.count ?? 0,
+      trends: {
+        totalTickets: pctChange(newTicketsThisWeek, newTicketsPrevWeek),
+        openTickets: pctChange(newOpenThisWeek, newOpenPrevWeek),
+        resolvedToday: pctChange(resolvedTodayCount, resolvedYesterdayCount),
+        criticalIncidents: pctChange(newCriticalThisWeek, newCriticalPrevWeek),
+      },
     };
   }),
 

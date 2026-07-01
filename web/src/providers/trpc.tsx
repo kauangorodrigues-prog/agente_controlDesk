@@ -5,6 +5,7 @@ import superjson from "superjson";
 import type { AppRouter } from "../../api/router";
 import type { ReactNode } from "react";
 
+// eslint-disable-next-line react-refresh/only-export-components -- trpc client must live alongside its provider
 export const trpc = createTRPCReact<AppRouter>();
 
 const queryClient = new QueryClient();
