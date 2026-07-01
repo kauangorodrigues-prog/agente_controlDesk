@@ -1,3 +1,4 @@
+# ── Núcleo (obrigatório em qualquer modo) ────────────────────────────────
 numpy
 pandas
 requests
@@ -7,8 +8,24 @@ scikit-learn
 SQLAlchemy>=2.0
 psycopg2-binary
 openpyxl
+APScheduler
 
-# Opcional: melhora o forecast em ForecastVolume.prever_prophet.
-# Sem este pacote instalado, o agente cai automaticamente no fallback
-# de média móvel (prever_media_movel) sem gerar erro.
+# ── Modo "api" (main.py api) ──────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+prometheus-client
+pydantic
+
+# ── Modo "dashboard" (streamlit run dashboard_app.py) ─────────────────────
+streamlit
+plotly
+
+# ── Opcionais ──────────────────────────────────────────────────────────────
+holidays          # sincronização automática de feriados nacionais
+
+# Sem este pacote instalado, ForecastService.generate_forecast() cai
+# automaticamente no fallback de média móvel, sem gerar erro.
 # prophet

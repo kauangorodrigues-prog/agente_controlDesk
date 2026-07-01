@@ -36,11 +36,10 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Diretórios gerados em runtime pelo control_desk_agent.py
-/mailings/
-/reports/
+# Diretórios/artefatos gerados em runtime pelo Agente Control Desk
+/data/
 /models/
-control_desk_agent.log
+/logs/
 
 # Unit test / coverage reports
 htmlcov/
