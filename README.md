@@ -39,3 +39,14 @@ python main.py api      # API REST em :8000
 # ou
 streamlit run dashboard_app.py   # dashboard visual
 ```
+
+## web/ — Control Desk IA (helpdesk interno)
+
+Além do agente Python, o repositório inclui em `web/` uma aplicação separada
+de service desk de TI (tickets, incidentes, chat com IA, relatórios e
+dashboard), construída em React 19 + Vite + Hono + tRPC + Drizzle/MySQL, com
+login via OAuth (Kimi). É um produto independente do agente de call center
+acima — ver `web/README.md` para detalhes e instruções de execução
+(`npm install`, configurar `web/.env` a partir de `web/.env.example` com um
+MySQL e credenciais OAuth, depois `npm run dev`, `npm run build` ou
+`npm start`).
