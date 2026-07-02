@@ -53,11 +53,15 @@ CREATE TABLE IF NOT EXISTS feriados (
     pacing_especial  DOUBLE PRECISION,
     observacao       TEXT,
     criado_por       TEXT DEFAULT 'USUARIO',
-    criado_em        TIMESTAMP NOT NULL DEFAULT NOW(),
-    -- Necessário para o "ON CONFLICT (data, tipo, uf, municipio)"
-    -- usado em HolidayService.adicionar_feriado().
-    CONSTRAINT uq_feriado UNIQUE (data, tipo, uf, municipio)
+    criado_em        TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- Índice único usado pelo upsert de HolidayService.adicionar_feriado().
+-- Usa COALESCE porque uf/municipio são NULL em feriados nacionais e o
+-- Postgres trata NULLs como DISTINTOS num UNIQUE comum — o que permitiria
+-- duplicatas a cada sincronização anual. Com COALESCE(...,'') o conflito
+-- é detectado corretamente.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_feriado
+    ON feriados (data, tipo, COALESCE(uf, ''), COALESCE(municipio, ''));
 CREATE INDEX IF NOT EXISTS idx_feriados_data ON feriados (data);
 
 CREATE TABLE IF NOT EXISTS pacing_audit_log (
@@ -119,6 +123,9 @@ CREATE INDEX IF NOT EXISTS idx_forecast_gerado ON forecast_calls (gerado_em);
 -- (Observação: o ETL grava também a coluna etl_ts; as consultas
 --  filtram por captured_at, que deve vir da própria API de origem.)
 
+-- captured_at tem DEFAULT NOW(): quando a API de origem não fornece a
+-- coluna, o instante da ingestão preenche o filtro por janela de tempo
+-- (as consultas de ocupação/auditoria/mailing filtram por captured_at).
 CREATE TABLE IF NOT EXISTS agents (
     agente_id     TEXT,
     nome          TEXT,
@@ -126,7 +133,7 @@ CREATE TABLE IF NOT EXISTS agents (
     campanha      TEXT,
     login_em      TIMESTAMP,
     pausa_inicio  TIMESTAMP,
-    captured_at   TIMESTAMP,
+    captured_at   TIMESTAMP DEFAULT NOW(),
     etl_ts        TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_agents_captured ON agents (captured_at);
@@ -158,7 +165,7 @@ CREATE TABLE IF NOT EXISTS campaign_snapshot (
     abandono_pct         DOUBLE PRECISION,
     agentes_logados      INTEGER,
     tipo_resultado       TEXT,
-    captured_at          TIMESTAMP,
+    captured_at          TIMESTAMP DEFAULT NOW(),
     etl_ts               TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_snapshot_captured ON campaign_snapshot (captured_at);
@@ -168,7 +175,7 @@ CREATE TABLE IF NOT EXISTS mailing_status (
     campanha_id          TEXT,
     campanha             TEXT,
     mailing_restante_pct DOUBLE PRECISION,
-    captured_at          TIMESTAMP,
+    captured_at          TIMESTAMP DEFAULT NOW(),
     etl_ts               TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_mailing_status_captured ON mailing_status (captured_at);
@@ -186,7 +193,7 @@ CREATE TABLE IF NOT EXISTS customers (
     melhor_hora_inicio INTEGER,
     melhor_hora_fim    INTEGER,
     promessa_quebrada  BOOLEAN,
-    captured_at        TIMESTAMP,
+    captured_at        TIMESTAMP DEFAULT NOW(),
     etl_ts             TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_customers_cpf ON customers (cpf);

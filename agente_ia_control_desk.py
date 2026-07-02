@@ -85,6 +85,21 @@ class Config:
         self.AMBIENTE  = os.getenv("AMBIENTE",  "development")
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+        # ── CORS ────────────────────────────────────────────
+        # Lista separada por vírgula; "*" libera todas as origens
+        # (aceitável só em desenvolvimento).
+        self.CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+
+    # Valores-sentinela inseguros que NUNCA devem ir para produção.
+    _DEFAULTS_INSEGUROS = {
+        "JWT_SECRET_KEY": "TROQUE_EM_PRODUCAO",
+        "POSTGRES_PASSWORD": "123456",
+    }
+
+    @property
+    def is_producao(self) -> bool:
+        return self.AMBIENTE.lower() in {"production", "producao", "prod"}
+
     @property
     def DATABASE_URL(self) -> str:
         return (
@@ -95,6 +110,37 @@ class Config:
     @property
     def EMAIL_DESTINOS_LIST(self) -> list:
         return [e.strip() for e in self.EMAIL_DESTINOS.split(",") if e.strip()]
+
+    @property
+    def CORS_ORIGINS_LIST(self) -> list:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()] or ["*"]
+
+    def problemas_seguranca(self) -> list:
+        """Retorna a lista de configurações inseguras detectadas."""
+        problemas = []
+        if self.JWT_SECRET_KEY == self._DEFAULTS_INSEGUROS["JWT_SECRET_KEY"]:
+            problemas.append("JWT_SECRET_KEY está com o valor padrão — defina um segredo forte.")
+        if self.POSTGRES_PASSWORD == self._DEFAULTS_INSEGUROS["POSTGRES_PASSWORD"]:
+            problemas.append("POSTGRES_PASSWORD está com o valor padrão.")
+        if "*" in self.CORS_ORIGINS_LIST:
+            problemas.append("CORS liberado para todas as origens (CORS_ORIGINS='*').")
+        return problemas
+
+    def validar_seguranca(self):
+        """Em produção, aborta se houver configuração insegura; em dev, apenas avisa."""
+        problemas = self.problemas_seguranca()
+        if not problemas:
+            return
+        if self.is_producao:
+            for p in problemas:
+                log.critical(f"[Segurança] {p}")
+            raise RuntimeError(
+                "Configuração insegura em produção: "
+                + " | ".join(problemas)
+                + " Ajuste as variáveis de ambiente e suba novamente."
+            )
+        for p in problemas:
+            log.warning(f"[Segurança] {p}")
 
 
 CFG = Config()
@@ -727,7 +773,7 @@ class HolidayService:
                      pausar_discagem, pacing_especial, observacao, criado_por)
                 VALUES (:data, :nome, :tipo, :uf, :municipio, :pm,
                         :pd, :pe, :obs, :criado)
-                ON CONFLICT (data, tipo, uf, municipio) DO UPDATE
+                ON CONFLICT (data, tipo, COALESCE(uf, ''), COALESCE(municipio, '')) DO UPDATE
                     SET nome = EXCLUDED.nome,
                         pausar_mailing  = EXCLUDED.pausar_mailing,
                         pausar_discagem = EXCLUDED.pausar_discagem,
@@ -1326,7 +1372,7 @@ def parar_scheduler():
 # ══════════════════════════════════════════════════════════════════════
 
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Query, status
+    from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
     from fastapi.responses import Response
@@ -1368,6 +1414,7 @@ try:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         log.info("=== Agente IA Control Desk iniciando ===")
+        CFG.validar_seguranca()
         iniciar_scheduler()
         yield
         parar_scheduler()
@@ -1377,7 +1424,22 @@ try:
         version="2.0.0",
         lifespan=lifespan,
     )
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CFG.CORS_ORIGINS_LIST,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.middleware("http")
+    async def _contar_requisicoes(request: Request, call_next):
+        # Usa a rota declarada (ex.: /feriados/{feriado_id}) para não explodir
+        # a cardinalidade da métrica com IDs; cai para o path cru se não houver.
+        response = await call_next(request)
+        rota = request.scope.get("route")
+        endpoint = getattr(rota, "path", None) or request.url.path
+        REQ_COUNT.labels(endpoint=endpoint).inc()
+        return response
 
     # ── Auth
     @app.post("/auth/token", tags=["Auth"])
@@ -1757,6 +1819,7 @@ if __name__ == "__main__":
     else:
         # python agente_ia_control_desk.py  → modo standalone com scheduler
         log.info("🚀 Iniciando Agente IA Control Desk — modo standalone")
+        CFG.validar_seguranca()
         send_webhook_alert("🤖 Agente IA Control Desk iniciado.", nivel="INFO", chave="startup", forcar=True)
         iniciar_scheduler()
         log.info("Scheduler rodando. Pressione Ctrl+C para encerrar.")

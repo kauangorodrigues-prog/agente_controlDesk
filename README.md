@@ -146,13 +146,15 @@ cálculo de pacing) e não dependem de banco de dados.
 ```
 .
 ├── agente_ia_control_desk.py   # aplicação (API + scheduler + dashboard + serviços)
+├── .github/workflows/ci.yml    # CI (pytest a cada push/PR)
 ├── db/
 │   ├── schema.sql              # DDL idempotente (todas as tabelas)
 │   └── seed_data.sql           # dados de exemplo
 ├── scripts/
 │   └── create_user.py          # cadastro de usuários da API (bcrypt)
 ├── tests/
-│   └── test_core.py            # testes das funções puras
+│   ├── test_core.py            # testes das funções puras
+│   └── test_config_security.py # validação de segurança + build do app
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -168,6 +170,17 @@ cálculo de pacing) e não dependem de banco de dados.
 
 Todas as configurações vêm de variáveis de ambiente (ver `.env.example`):
 banco, tokens de discador/cobrador, webhook/e-mail de alertas, segredo JWT,
-limites operacionais e guardrails de pacing. **Em produção, defina um
-`JWT_SECRET_KEY` forte e uma senha de banco real** — os valores padrão são
-apenas para desenvolvimento local.
+CORS, limites operacionais e guardrails de pacing.
+
+**Segurança em produção:** com `AMBIENTE=production`, o app faz uma validação
+no startup e **se recusa a subir** se `JWT_SECRET_KEY` ou `POSTGRES_PASSWORD`
+ainda estiverem com os valores padrão, ou avisa se o CORS estiver liberado
+para todas as origens. Em desenvolvimento essas pendências viram apenas
+`WARNING` no log. Defina `CORS_ORIGINS` com os domínios do seu frontend em
+produção (em vez de `*`).
+
+## Integração contínua
+
+O workflow `.github/workflows/ci.yml` roda `pytest` a cada push/PR
+(instalando `requirements.txt`), validando a lógica pura, a construção do
+app FastAPI e a validação de segurança de configuração.
