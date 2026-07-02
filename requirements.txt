@@ -1,0 +1,35 @@
+# ============================================================
+# Agente IA Control Desk — dependências
+# Python 3.10+ recomendado
+# ============================================================
+
+# ── Núcleo (ETL, scheduler, dados) ──────────────────────────
+pandas>=2.0
+numpy>=1.24
+requests>=2.31
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9        # driver PostgreSQL
+python-dotenv>=1.0
+APScheduler>=3.10
+holidays>=0.45             # sincronização de feriados nacionais
+openpyxl>=3.1              # exportação de relatórios .xlsx
+
+# ── API (FastAPI) ───────────────────────────────────────────
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.5
+python-jose[cryptography]>=3.3   # JWT
+passlib[bcrypt]>=1.7             # hash de senha
+prometheus-client>=0.20
+
+# ── Dashboard (opcional — instale se for usar o Streamlit) ──
+streamlit>=1.33
+plotly>=5.20
+
+# ── Forecast avançado (OPCIONAL / pesado) ───────────────────
+# O ForecastService cai para um fallback estatístico se o
+# Prophet não estiver instalado. Descomente para habilitar:
+# prophet>=1.1
+
+# ── Testes (opcional) ───────────────────────────────────────
+# pytest>=8.0
