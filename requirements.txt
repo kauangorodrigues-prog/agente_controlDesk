@@ -21,6 +21,7 @@ pydantic>=2.5
 python-multipart>=0.0.9          # exigido pelo OAuth2PasswordRequestForm (/auth/token)
 python-jose[cryptography]>=3.3   # JWT
 passlib[bcrypt]>=1.7             # hash de senha
+bcrypt>=4.0,<5.0                 # passlib 1.7.x quebra com bcrypt 5.x (erro "72 bytes")
 prometheus-client>=0.20
 psutil>=5.9                      # métricas de CPU/RAM em /health (degrada se ausente)
 

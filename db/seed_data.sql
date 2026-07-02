@@ -24,4 +24,4 @@ INSERT INTO feriados
     (data, nome, tipo, pausar_mailing, pausar_discagem, criado_por)
 VALUES
     ('2026-12-25', 'Natal', 'NACIONAL', TRUE, TRUE, 'SEED')
-ON CONFLICT (data, tipo, uf, municipio) DO NOTHING;
+ON CONFLICT (data, tipo, COALESCE(uf, ''), COALESCE(municipio, '')) DO NOTHING;
