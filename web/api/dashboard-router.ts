@@ -87,20 +87,17 @@ export const dashboardRouter = createRouter({
       return d.toISOString().split("T")[0];
     });
 
-    const results = [];
-    for (const date of last7Days) {
-      const count = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(tickets)
-        .where(sql`DATE(createdAt) = ${date}`);
+    const rows = await db
+      .select({
+        date: sql<string>`DATE_FORMAT(createdAt, '%Y-%m-%d')`,
+        count: sql<number>`count(*)`,
+      })
+      .from(tickets)
+      .where(sql`createdAt >= CURDATE() - INTERVAL 6 DAY`)
+      .groupBy(sql`DATE_FORMAT(createdAt, '%Y-%m-%d')`);
 
-      results.push({
-        date,
-        count: count[0]?.count ?? 0,
-      });
-    }
-
-    return results;
+    const byDate = new Map(rows.map((r) => [r.date, r.count]));
+    return last7Days.map((date) => ({ date, count: byDate.get(date) ?? 0 }));
   }),
 
   ticketsByCategory: authedQuery.query(async () => {

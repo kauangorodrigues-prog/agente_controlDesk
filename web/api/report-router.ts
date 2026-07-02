@@ -8,62 +8,66 @@ export const reportRouter = createRouter({
   ticketVolume: authedQuery
     .input(
       z.object({
-        days: z.number().default(7),
+        days: z.number().min(1).max(365).default(7),
       }).optional()
     )
     .query(async ({ input }) => {
       const db = getDb();
       const days = input?.days ?? 7;
 
-      const results = [];
-      for (let i = days - 1; i >= 0; i--) {
+      const dateRange = Array.from({ length: days }, (_, i) => {
         const d = new Date();
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split("T")[0];
+        d.setDate(d.getDate() - (days - 1 - i));
+        return d.toISOString().split("T")[0];
+      });
 
-        const created = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(tickets)
-          .where(sql`DATE(createdAt) = ${dateStr}`);
+      const createdRows = await db
+        .select({
+          date: sql<string>`DATE_FORMAT(createdAt, '%Y-%m-%d')`,
+          count: sql<number>`count(*)`,
+        })
+        .from(tickets)
+        .where(sql`createdAt >= CURDATE() - INTERVAL ${days - 1} DAY`)
+        .groupBy(sql`DATE_FORMAT(createdAt, '%Y-%m-%d')`);
 
-        const resolved = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(tickets)
-          .where(
-            sql`DATE(resolvedAt) = ${dateStr} AND status = 'resolved'`
-          );
+      const resolvedRows = await db
+        .select({
+          date: sql<string>`DATE_FORMAT(resolvedAt, '%Y-%m-%d')`,
+          count: sql<number>`count(*)`,
+        })
+        .from(tickets)
+        .where(sql`status = 'resolved' AND resolvedAt >= CURDATE() - INTERVAL ${days - 1} DAY`)
+        .groupBy(sql`DATE_FORMAT(resolvedAt, '%Y-%m-%d')`);
 
-        results.push({
-          date: dateStr,
-          created: created[0]?.count ?? 0,
-          resolved: resolved[0]?.count ?? 0,
-        });
-      }
+      const createdByDate = new Map(createdRows.map((r) => [r.date, r.count]));
+      const resolvedByDate = new Map(resolvedRows.map((r) => [r.date, r.count]));
 
-      return results;
+      return dateRange.map((date) => ({
+        date,
+        created: createdByDate.get(date) ?? 0,
+        resolved: resolvedByDate.get(date) ?? 0,
+      }));
     }),
 
   resolutionTime: authedQuery.query(async () => {
     const db = getDb();
 
     const categories = ["hardware", "software", "network", "security", "access", "other"] as const;
-    const results = [];
 
-    for (const category of categories) {
-      const avgTime = await db
-        .select({
-          avg: sql<number>`COALESCE(AVG(TIMESTAMPDIFF(HOUR, createdAt, resolvedAt)), 0)`,
-        })
-        .from(tickets)
-        .where(eq(tickets.category, category));
+    const rows = await db
+      .select({
+        category: tickets.category,
+        avg: sql<number>`COALESCE(AVG(TIMESTAMPDIFF(HOUR, createdAt, resolvedAt)), 0)`,
+      })
+      .from(tickets)
+      .groupBy(tickets.category);
 
-      results.push({
-        category: category.charAt(0).toUpperCase() + category.slice(1),
-        hours: Math.round(avgTime[0]?.avg ?? 0),
-      });
-    }
+    const byCategory = new Map(rows.map((r) => [r.category, r.avg]));
 
-    return results;
+    return categories.map((category) => ({
+      category: category.charAt(0).toUpperCase() + category.slice(1),
+      hours: Math.round(byCategory.get(category) ?? 0),
+    }));
   }),
 
   priorityDistribution: authedQuery.query(async () => {
@@ -97,7 +101,7 @@ export const reportRouter = createRouter({
   summary: authedQuery
     .input(
       z.object({
-        days: z.number().default(30),
+        days: z.number().min(1).max(365).default(30),
       }).optional()
     )
     .query(async ({ input }) => {
