@@ -4,14 +4,18 @@ from __future__ import annotations
 # IMPORTS GLOBAIS
 # ══════════════════════════════════════════════════════════════════════
 
+import contextvars
 import hashlib
+import json
 import logging
 import math
 import os
 import re
 import smtplib
+import threading
 import time
 import traceback
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timedelta, time as dtime
 from email import encoders
@@ -86,6 +90,8 @@ class Config:
         # ── Ambiente ────────────────────────────────────────
         self.AMBIENTE  = os.getenv("AMBIENTE",  "development")
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+        # "plain" (padrão, compatível) ou "json" (logs estruturados Enterprise).
+        self.LOG_FORMAT = os.getenv("LOG_FORMAT", "plain").lower()
 
         # ── CORS ────────────────────────────────────────────
         # Lista separada por vírgula; "*" libera todas as origens
@@ -223,12 +229,58 @@ def testar_conexao() -> bool:
 
 os.makedirs("logs", exist_ok=True)
 
-_fmt = logging.Formatter(
-    "%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s",
+# Correlation ID propagado por contexto (request/execução). Fica em branco
+# quando não há um contexto ativo — compatível com o comportamento atual.
+_correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
+
+
+def set_correlation_id(valor: str = None) -> str:
+    """Define (ou gera) o correlation id do contexto atual e o retorna."""
+    valor = valor or uuid.uuid4().hex[:16]
+    _correlation_id.set(valor)
+    return valor
+
+
+def get_correlation_id() -> str:
+    return _correlation_id.get()
+
+
+class _CorrelationFilter(logging.Filter):
+    """Injeta o correlation id em todos os LogRecords."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.correlation_id = _correlation_id.get() or "-"
+        return True
+
+
+class JsonFormatter(logging.Formatter):
+    """Formatter de logs estruturados em JSON (Enterprise). Ativado via LOG_FORMAT=json."""
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": datetime.utcfromtimestamp(record.created).isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "correlation_id": getattr(record, "correlation_id", "-"),
+        }
+        # Campos extras arbitrários passados via logger.info(..., extra={...}).
+        for chave in ("job_id", "execution_id", "campaign_id", "agent_id",
+                      "request_id", "origem", "destino", "duracao_s"):
+            if hasattr(record, chave):
+                payload[chave] = getattr(record, chave)
+        if record.exc_info:
+            payload["stacktrace"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+_fmt_plain = logging.Formatter(
+    "%(asctime)s | %(levelname)-8s | %(name)-25s | [%(correlation_id)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+_formatter = JsonFormatter() if CFG.LOG_FORMAT == "json" else _fmt_plain
+
 _console = logging.StreamHandler()
-_console.setFormatter(_fmt)
+_console.setFormatter(_formatter)
+_console.addFilter(_CorrelationFilter())
 
 _file = RotatingFileHandler(
     "logs/control_desk.log",
@@ -236,13 +288,157 @@ _file = RotatingFileHandler(
     backupCount=5,
     encoding="utf-8",
 )
-_file.setFormatter(_fmt)
+_file.setFormatter(_formatter)
+_file.addFilter(_CorrelationFilter())
 
 logging.basicConfig(
     level=getattr(logging, CFG.LOG_LEVEL.upper(), logging.INFO),
     handlers=[_console, _file],
 )
 log = logging.getLogger("ControlDesk")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 3B. OBSERVABILIDADE (métricas de jobs, health, recursos)
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Métricas Prometheus de jobs (degradam se a lib estiver ausente) ──
+try:
+    from prometheus_client import Counter as _PCounter, Histogram as _PHistogram
+    JOB_RUNS_TOTAL = _PCounter("cd_job_runs_total", "Execuções de jobs", ["job", "status"])
+    JOB_DURATION_SECONDS = _PHistogram("cd_job_duration_seconds", "Duração dos jobs (s)", ["job"])
+    _PROM_JOBS = True
+except Exception:  # pragma: no cover
+    JOB_RUNS_TOTAL = JOB_DURATION_SECONDS = None
+    _PROM_JOBS = False
+
+# ── Registro em memória do estado dos jobs (para /health/jobs) ──
+JOB_STATS: dict = {}
+_JOB_STATS_LOCK = threading.Lock()
+
+
+def registrar_execucao_job(nome: str, status: str, duracao_s: float, erro: str = None):
+    """Atualiza o estado do job e as métricas Prometheus. Reutilizado por _safe_run."""
+    with _JOB_STATS_LOCK:
+        st = JOB_STATS.setdefault(nome, {
+            "runs": 0, "failures": 0, "total_duracao_s": 0.0,
+            "last_run": None, "last_status": None, "last_duracao_s": None, "last_error": None,
+        })
+        st["runs"] += 1
+        st["total_duracao_s"] += duracao_s
+        st["last_run"] = datetime.utcnow().isoformat()
+        st["last_status"] = status
+        st["last_duracao_s"] = round(duracao_s, 3)
+        if status == "erro":
+            st["failures"] += 1
+            st["last_error"] = erro
+        st["avg_duracao_s"] = round(st["total_duracao_s"] / st["runs"], 3)
+        st["success_rate"] = round((st["runs"] - st["failures"]) / st["runs"], 4)
+    if _PROM_JOBS:
+        try:
+            JOB_RUNS_TOTAL.labels(job=nome, status=status).inc()
+            JOB_DURATION_SECONDS.labels(job=nome).observe(duracao_s)
+        except Exception:
+            pass
+
+
+def _recursos_sistema() -> dict:
+    """CPU/RAM/threads. Usa psutil se disponível; caso contrário, degrada."""
+    info = {"threads": threading.active_count()}
+    try:
+        import psutil
+        p = psutil.Process()
+        info["cpu_pct"] = psutil.cpu_percent(interval=None)
+        info["mem_rss_mb"] = round(p.memory_info().rss / (1024 * 1024), 1)
+        info["mem_pct"] = round(psutil.virtual_memory().percent, 1)
+    except Exception:
+        info["cpu_pct"] = info["mem_rss_mb"] = info["mem_pct"] = None
+    return info
+
+
+# ── Health checks reutilizáveis (independentes do FastAPI) ──
+def health_database() -> dict:
+    inicio = time.perf_counter()
+    ok = testar_conexao()
+    latencia = round((time.perf_counter() - inicio) * 1000, 1)
+    d = {"status": "ok" if ok else "erro", "latencia_ms": latencia}
+    try:
+        if engine is not None and hasattr(engine.pool, "size"):
+            d["pool_size"] = engine.pool.size()
+            d["pool_checked_out"] = engine.pool.checkedout()
+    except Exception:
+        pass
+    return d
+
+
+def _ping_api(base_url: str, token: str) -> dict:
+    if not base_url:
+        return {"status": "nao_configurado", "reachable": None}
+    try:
+        r = requests.get(base_url, timeout=3)
+        return {"status": "ok", "reachable": True, "http": r.status_code}
+    except (requests.Timeout, requests.ConnectionError):
+        return {"status": "inalcancavel", "reachable": False}
+    except Exception as e:
+        return {"status": "erro", "reachable": False, "detalhe": str(e)[:120]}
+
+
+def health_apis() -> dict:
+    return {
+        "dialer": _ping_api(CFG.DIALER_BASE_URL, CFG.DIALER_TOKEN),
+        "collector": _ping_api(CFG.COLLECTOR_BASE_URL, CFG.COLLECTOR_TOKEN),
+    }
+
+
+def health_jobs() -> dict:
+    sched = globals().get("_scheduler")
+    agendados, rodando = [], False
+    if sched is not None:
+        try:
+            rodando = sched.running
+            agendados = [
+                {"id": j.id, "proxima_execucao": (j.next_run_time.isoformat() if j.next_run_time else None)}
+                for j in sched.get_jobs()
+            ]
+        except Exception:
+            pass
+    with _JOB_STATS_LOCK:
+        stats = {k: dict(v) for k, v in JOB_STATS.items()}
+    return {"scheduler_ativo": rodando, "agendados": agendados, "jobs": stats}
+
+
+def health_ia() -> dict:
+    """Estado da camada preditiva (forecast + scorer)."""
+    d = {"scorer": "heuristico"}  # substituído por modelo GBM na Fase 5
+    try:
+        rows = executar_query("SELECT MAX(gerado_em) AS ultimo FROM forecast_calls")
+        ultimo = rows[0]["ultimo"] if rows else None
+        d["forecast_ultimo"] = ultimo.isoformat() if hasattr(ultimo, "isoformat") else ultimo
+        d["status"] = "ok" if ultimo else "sem_previsao"
+    except Exception:
+        d["status"] = "indisponivel"
+        d["forecast_ultimo"] = None
+    try:
+        import prophet  # noqa: F401
+        d["prophet"] = True
+    except Exception:
+        d["prophet"] = False
+    return d
+
+
+def health_geral() -> dict:
+    db = health_database()
+    jobs = health_jobs()
+    return {
+        "status": "ok" if db["status"] == "ok" else "degradado",
+        "versao": "2.0.0",
+        "ambiente": CFG.AMBIENTE,
+        "banco": db,
+        "scheduler_ativo": jobs["scheduler_ativo"],
+        "jobs_agendados": len(jobs["agendados"]),
+        "recursos": _recursos_sistema(),
+        "ts": datetime.utcnow().isoformat(),
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1470,10 +1666,16 @@ _scheduler = None
 
 
 def _safe_run(fn, nome: str):
+    set_correlation_id()  # id único por execução (aparece nos logs)
+    inicio = time.perf_counter()
     try:
         fn()
+        registrar_execucao_job(nome, "ok", time.perf_counter() - inicio)
     except Exception:
-        log.error(f"[Scheduler] Job '{nome}' falhou:\n{traceback.format_exc()}")
+        tb = traceback.format_exc()
+        ultima_linha = tb.strip().splitlines()[-1] if tb.strip() else None
+        registrar_execucao_job(nome, "erro", time.perf_counter() - inicio, erro=ultima_linha)
+        log.error(f"[Scheduler] Job '{nome}' falhou:\n{tb}")
 
 
 def iniciar_scheduler():
@@ -1610,9 +1812,14 @@ try:
 
     @app.middleware("http")
     async def _contar_requisicoes(request: Request, call_next):
+        # Correlation/Request ID: usa o header recebido ou gera um novo,
+        # propaga para os logs e devolve no cabeçalho da resposta.
+        req_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
+        set_correlation_id(req_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
         # Usa a rota declarada (ex.: /feriados/{feriado_id}) para não explodir
         # a cardinalidade da métrica com IDs; cai para o path cru se não houver.
-        response = await call_next(request)
         rota = request.scope.get("route")
         endpoint = getattr(rota, "path", None) or request.url.path
         REQ_COUNT.labels(endpoint=endpoint).inc()
@@ -1637,6 +1844,27 @@ try:
     @app.get("/metrics", tags=["Sistema"])
     def metrics():
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    # ── Health checks Enterprise (públicos, sem autenticação) ──
+    @app.get("/health", tags=["Health"])
+    def health_completo():
+        return health_geral()
+
+    @app.get("/health/database", tags=["Health"])
+    def health_db():
+        return health_database()
+
+    @app.get("/health/jobs", tags=["Health"])
+    def health_jobs_ep():
+        return health_jobs()
+
+    @app.get("/health/apis", tags=["Health"])
+    def health_apis_ep():
+        return health_apis()
+
+    @app.get("/health/ia", tags=["Health"])
+    def health_ia_ep():
+        return health_ia()
 
     # ── ETL
     @app.post("/etl/run", tags=["ETL"], dependencies=[Depends(_verificar_token)])

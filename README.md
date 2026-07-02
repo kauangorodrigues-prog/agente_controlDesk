@@ -108,7 +108,8 @@ Rotas de escrita de feriados exigem `role=admin`.
 | Método | Rota | Descrição |
 |---|---|---|
 | POST | `/auth/token` | Login (retorna JWT) |
-| GET  | `/` , `/metrics` | Health e métricas Prometheus |
+| GET  | `/` , `/metrics` | Health simples e métricas Prometheus |
+| GET  | `/health`, `/health/{database,jobs,apis,ia}` | Health checks detalhados (públicos) |
 | POST | `/etl/run` | Dispara o ETL |
 | GET  | `/ocupacao`, `/ocupacao/campanhas` | Ocupação em tempo real |
 | POST | `/pacing/ajustar` · GET `/pacing/historico` | Pacing e auditoria |
@@ -167,7 +168,8 @@ cálculo de pacing) e não dependem de banco de dados.
 ├── tests/
 │   ├── test_core.py            # testes das funções puras
 │   ├── test_config_security.py # validação de segurança + build do app
-│   └── test_uplift.py          # estatística e atribuição de uplift
+│   ├── test_uplift.py          # estatística e atribuição de uplift
+│   └── test_observability.py   # logging JSON, registro de jobs, health
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -191,6 +193,14 @@ ainda estiverem com os valores padrão, ou avisa se o CORS estiver liberado
 para todas as origens. Em desenvolvimento essas pendências viram apenas
 `WARNING` no log. Defina `CORS_ORIGINS` com os domínios do seu frontend em
 produção (em vez de `*`).
+
+## Observabilidade (Enterprise)
+
+- **Health checks** — `GET /health` (visão geral: banco, scheduler, jobs, CPU/RAM/threads), além de `/health/database`, `/health/jobs` (estado, última execução, tempo médio, falhas, taxa de sucesso por job), `/health/apis` (reachability do discador/cobrador) e `/health/ia` (forecast + scorer). São públicos, próprios para *liveness/readiness*.
+- **Métricas Prometheus** — `GET /metrics` inclui `cd_requests_total`, `cd_job_runs_total{job,status}` e `cd_job_duration_seconds`. Os jobs são instrumentados no próprio wrapper `_safe_run` (sem alterar a lógica dos serviços).
+- **Logs estruturados** — defina `LOG_FORMAT=json` para logs em JSON com `correlation_id` (e campos extras como `job_id`, `campaign_id`). O padrão (`plain`) mantém o formato legível de sempre. Toda requisição HTTP recebe/gera um `X-Request-ID`, propagado aos logs e devolvido no cabeçalho da resposta.
+
+> Tudo acima é **aditivo e retrocompatível**: nenhum endpoint ou comportamento existente mudou. Faz parte da Fase 1 da evolução Enterprise (observabilidade e prontidão para produção).
 
 ## Integração contínua
 

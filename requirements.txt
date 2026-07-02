@@ -22,6 +22,7 @@ python-multipart>=0.0.9          # exigido pelo OAuth2PasswordRequestForm (/auth
 python-jose[cryptography]>=3.3   # JWT
 passlib[bcrypt]>=1.7             # hash de senha
 prometheus-client>=0.20
+psutil>=5.9                      # métricas de CPU/RAM em /health (degrada se ausente)
 
 # ── Dashboard (opcional — instale se for usar o Streamlit) ──
 streamlit>=1.33
