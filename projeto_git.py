@@ -1329,7 +1329,8 @@ try:
     from fastapi import Depends, FastAPI, HTTPException, Query, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-    from fastapi.responses import Response
+    from fastapi.responses import Response, RedirectResponse
+    from fastapi.staticfiles import StaticFiles
     from jose import JWTError, jwt
     from passlib.context import CryptContext
     from pydantic import BaseModel
@@ -1521,6 +1522,19 @@ try:
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
     def config_campanhas():
         return executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE ORDER BY campanha_nome")
+
+    # ── Frontend estático (SPA ATLAS) ───────────────────────────────
+    # Servido em /app/ — a API permanece em suas rotas originais.
+    _FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+    if os.path.isdir(_FRONTEND_DIR):
+        @app.get("/app", include_in_schema=False)
+        def _app_redirect():
+            return RedirectResponse(url="/app/")
+
+        app.mount("/app", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
+        log.info(f"[Frontend] SPA ATLAS disponível em /app/  ({_FRONTEND_DIR})")
+    else:
+        log.warning("[Frontend] Diretório 'frontend/' não encontrado — SPA não montada.")
 
     FASTAPI_DISPONIVEL = True
 
