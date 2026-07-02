@@ -4,7 +4,9 @@ from __future__ import annotations
 # IMPORTS GLOBAIS
 # ══════════════════════════════════════════════════════════════════════
 
+import hashlib
 import logging
+import math
 import os
 import re
 import smtplib
@@ -1298,6 +1300,169 @@ class ReportService:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# 14B. UPLIFT SERVICE (medição tratado × controle)
+# ══════════════════════════════════════════════════════════════════════
+# Prova o ganho de recuperação comparando um grupo TRATADO (recebe a
+# priorização/inteligência) contra um grupo de CONTROLE (fluxo padrão).
+# É a métrica que sustenta a venda por ROI — sempre medida com controle.
+
+GRUPO_TRATADO  = "tratado"
+GRUPO_CONTROLE = "controle"
+
+
+class UpliftService:
+
+    @staticmethod
+    def _phi(x: float) -> float:
+        """CDF da normal padrão (sem dependências externas)."""
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    @staticmethod
+    def _hash_ratio(experimento: str, chave: str) -> float:
+        """Mapeia (experimento, chave) para [0,1) de forma determinística e estável."""
+        h = hashlib.sha256(f"{experimento}::{chave}".encode("utf-8")).hexdigest()
+        return int(h[:8], 16) / 0xFFFFFFFF
+
+    @staticmethod
+    def definir_grupo(experimento: str, chave: str, pct_controle: float = 0.2) -> str:
+        """Atribuição determinística: a mesma chave cai sempre no mesmo grupo."""
+        pct = min(max(pct_controle, 0.0), 1.0)
+        return GRUPO_CONTROLE if UpliftService._hash_ratio(experimento, chave) < pct else GRUPO_TRATADO
+
+    @staticmethod
+    def uplift_stats(n_trat: int, conv_trat: int, n_ctrl: int, conv_ctrl: int) -> dict:
+        """Estatística pura do teste de duas proporções (tratado × controle)."""
+        n_trat = max(int(n_trat), 0); n_ctrl = max(int(n_ctrl), 0)
+        conv_trat = max(int(conv_trat), 0); conv_ctrl = max(int(conv_ctrl), 0)
+        taxa_trat = (conv_trat / n_trat) if n_trat else 0.0
+        taxa_ctrl = (conv_ctrl / n_ctrl) if n_ctrl else 0.0
+        uplift_abs = taxa_trat - taxa_ctrl
+        uplift_rel = (uplift_abs / taxa_ctrl) if taxa_ctrl > 0 else None
+
+        z = None; p_valor = None; significante = False
+        if n_trat > 0 and n_ctrl > 0:
+            p_pool = (conv_trat + conv_ctrl) / (n_trat + n_ctrl)
+            se = math.sqrt(p_pool * (1 - p_pool) * (1 / n_trat + 1 / n_ctrl))
+            if se > 0:
+                z = uplift_abs / se
+                p_valor = 2 * (1 - UpliftService._phi(abs(z)))
+                significante = p_valor < 0.05
+        return {
+            "n_tratado": n_trat, "conv_tratado": conv_trat, "taxa_tratado": round(taxa_trat, 4),
+            "n_controle": n_ctrl, "conv_controle": conv_ctrl, "taxa_controle": round(taxa_ctrl, 4),
+            "uplift_abs_pp": round(uplift_abs * 100, 2),
+            "uplift_rel_pct": (round(uplift_rel * 100, 2) if uplift_rel is not None else None),
+            "z": (round(z, 3) if z is not None else None),
+            "p_valor": (round(p_valor, 4) if p_valor is not None else None),
+            "significante_95": significante,
+        }
+
+    # ── Persistência ──────────────────────────────────────
+    @staticmethod
+    def criar_experimento(nome, descricao=None, pct_controle=0.2,
+                          data_inicio=None, data_fim=None, criado_por="API") -> bool:
+        try:
+            executar_comando(
+                """
+                INSERT INTO uplift_experimentos
+                    (nome, descricao, pct_controle, data_inicio, data_fim, ativo, criado_por)
+                VALUES (:n, :d, :pc, :di, :df, TRUE, :cp)
+                ON CONFLICT (nome) DO UPDATE
+                    SET descricao    = EXCLUDED.descricao,
+                        pct_controle = EXCLUDED.pct_controle,
+                        data_inicio  = EXCLUDED.data_inicio,
+                        data_fim     = EXCLUDED.data_fim,
+                        ativo        = TRUE
+                """,
+                {"n": nome, "d": descricao, "pc": pct_controle,
+                 "di": data_inicio, "df": data_fim, "cp": criado_por},
+            )
+            log.info(f"[Uplift] Experimento '{nome}' salvo (controle={pct_controle:.0%})")
+            return True
+        except Exception as e:
+            log.error(f"[Uplift] Erro ao criar experimento: {e}")
+            return False
+
+    @staticmethod
+    def listar_experimentos() -> list:
+        try:
+            return executar_query("SELECT * FROM uplift_experimentos ORDER BY criado_em DESC")
+        except Exception:
+            return []
+
+    @staticmethod
+    def _experimento(nome: str) -> Optional[dict]:
+        try:
+            rows = executar_query("SELECT * FROM uplift_experimentos WHERE nome = :n", {"n": nome})
+            return rows[0] if rows else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def atribuir_carteira(experimento: str, cpfs: list, campanha_id: str = None) -> dict:
+        """Atribui uma lista de CPFs ao experimento (idempotente por CPF)."""
+        exp = UpliftService._experimento(experimento)
+        if not exp:
+            return {"erro": "experimento não encontrado"}
+        pct = float(exp.get("pct_controle", 0.2))
+        contagem = {GRUPO_TRATADO: 0, GRUPO_CONTROLE: 0}
+        for cpf in cpfs:
+            cpf = str(cpf).strip()
+            if not cpf:
+                continue
+            grupo = UpliftService.definir_grupo(experimento, cpf, pct)
+            try:
+                executar_comando(
+                    """
+                    INSERT INTO uplift_atribuicoes (experimento, cpf, campanha_id, grupo)
+                    VALUES (:e, :c, :camp, :g)
+                    ON CONFLICT (experimento, cpf) DO NOTHING
+                    """,
+                    {"e": experimento, "c": cpf, "camp": campanha_id, "g": grupo},
+                )
+                contagem[grupo] += 1
+            except Exception as e:
+                log.debug(f"[Uplift] Falha ao atribuir {cpf}: {e}")
+        log.info(f"[Uplift] {experimento}: {contagem}")
+        return {"experimento": experimento, "atribuidos": contagem}
+
+    @staticmethod
+    def relatorio(experimento: str) -> dict:
+        """Uplift de recuperação: junta as atribuições com as promessas/acordos."""
+        exp = UpliftService._experimento(experimento)
+        if not exp:
+            return {"erro": "experimento não encontrado"}
+        try:
+            rows = executar_query(
+                """
+                SELECT a.grupo,
+                       COUNT(DISTINCT a.cpf) AS total,
+                       COUNT(DISTINCT p.cpf) AS recuperados
+                FROM uplift_atribuicoes a
+                LEFT JOIN collector_promessas p
+                       ON p.cpf = a.cpf
+                      AND (:di IS NULL OR p.data_promessa >= :di)
+                      AND (:df IS NULL OR p.data_promessa <= :df)
+                WHERE a.experimento = :e
+                GROUP BY a.grupo
+                """,
+                {"e": experimento, "di": exp.get("data_inicio"), "df": exp.get("data_fim")},
+            )
+        except Exception as e:
+            return {"erro": f"falha ao calcular: {e}"}
+
+        por_grupo = {r["grupo"]: r for r in rows}
+        t = por_grupo.get(GRUPO_TRATADO, {})
+        c = por_grupo.get(GRUPO_CONTROLE, {})
+        stats = UpliftService.uplift_stats(
+            t.get("total", 0), t.get("recuperados", 0),
+            c.get("total", 0), c.get("recuperados", 0),
+        )
+        stats["experimento"] = experimento
+        return stats
+
+
+# ══════════════════════════════════════════════════════════════════════
 # 15. SCHEDULER
 # ══════════════════════════════════════════════════════════════════════
 
@@ -1410,6 +1575,18 @@ try:
         pausar_discagem: bool = True
         pacing_especial: Optional[float] = None
         observacao:      Optional[str] = None
+
+    class ExperimentoIn(BaseModel):
+        nome:         str
+        descricao:    Optional[str] = None
+        pct_controle: float = 0.2
+        data_inicio:  Optional[str] = None
+        data_fim:     Optional[str] = None
+
+    class AtribuirIn(BaseModel):
+        cpfs:                 Optional[list] = None
+        campanha_id:          Optional[str] = None
+        usar_mailing_scored:  bool = False
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -1583,6 +1760,48 @@ try:
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
     def config_campanhas():
         return executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE ORDER BY campanha_nome")
+
+    # ── Uplift (tratado × controle)
+    @app.get("/uplift/experimentos", tags=["Uplift"], dependencies=[Depends(_verificar_token)])
+    def uplift_listar():
+        return UpliftService.listar_experimentos()
+
+    @app.post("/uplift/experimentos", tags=["Uplift"], dependencies=[Depends(_requer_admin)])
+    def uplift_criar(body: ExperimentoIn, payload: dict = Depends(_verificar_token)):
+        try:
+            di = date.fromisoformat(body.data_inicio) if body.data_inicio else None
+            df_fim = date.fromisoformat(body.data_fim) if body.data_fim else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Datas devem estar em YYYY-MM-DD")
+        if not 0.0 <= body.pct_controle <= 1.0:
+            raise HTTPException(status_code=400, detail="pct_controle deve estar entre 0 e 1")
+        ok = UpliftService.criar_experimento(
+            nome=body.nome, descricao=body.descricao, pct_controle=body.pct_controle,
+            data_inicio=di, data_fim=df_fim, criado_por=payload.get("sub", "API"),
+        )
+        if not ok:
+            raise HTTPException(status_code=500, detail="Erro ao criar experimento")
+        return {"message": f"Experimento '{body.nome}' salvo"}
+
+    @app.post("/uplift/{experimento}/atribuir", tags=["Uplift"], dependencies=[Depends(_verificar_token)])
+    def uplift_atribuir(experimento: str, body: AtribuirIn):
+        cpfs = list(body.cpfs or [])
+        if body.usar_mailing_scored and not cpfs:
+            rows = executar_query("SELECT DISTINCT cpf FROM mailing_scored WHERE cpf IS NOT NULL")
+            cpfs = [r["cpf"] for r in rows]
+        if not cpfs:
+            raise HTTPException(status_code=400, detail="Informe 'cpfs' ou use 'usar_mailing_scored'")
+        resultado = UpliftService.atribuir_carteira(experimento, cpfs, body.campanha_id)
+        if resultado.get("erro"):
+            raise HTTPException(status_code=404, detail=resultado["erro"])
+        return resultado
+
+    @app.get("/uplift/{experimento}/relatorio", tags=["Uplift"], dependencies=[Depends(_verificar_token)])
+    def uplift_relatorio(experimento: str):
+        rel = UpliftService.relatorio(experimento)
+        if rel.get("erro"):
+            raise HTTPException(status_code=404, detail=rel["erro"])
+        return rel
 
     FASTAPI_DISPONIVEL = True
 

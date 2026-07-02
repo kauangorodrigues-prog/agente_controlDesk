@@ -213,3 +213,34 @@ CREATE INDEX IF NOT EXISTS idx_promessas_cpf ON collector_promessas (cpf);
 -- NOTA: a tabela `mailing_scored` é totalmente gerenciada pela
 -- aplicação (MailingScoreService usa to_sql if_exists='replace',
 -- recriando-a a cada execução), portanto não é definida aqui.
+
+
+-- ------------------------------------------------------------
+-- 4. Uplift (medição tratado × controle)
+-- ------------------------------------------------------------
+-- Prova o ganho de recuperação de um experimento comparando o grupo
+-- tratado (recebe a priorização) com o grupo de controle.
+
+CREATE TABLE IF NOT EXISTS uplift_experimentos (
+    id            SERIAL PRIMARY KEY,
+    nome          TEXT NOT NULL UNIQUE,
+    descricao     TEXT,
+    pct_controle  DOUBLE PRECISION NOT NULL DEFAULT 0.2,  -- fração no controle (0..1)
+    data_inicio   DATE,
+    data_fim      DATE,
+    ativo         BOOLEAN NOT NULL DEFAULT TRUE,
+    criado_por    TEXT DEFAULT 'API',
+    criado_em     TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS uplift_atribuicoes (
+    id            SERIAL PRIMARY KEY,
+    experimento   TEXT NOT NULL,
+    cpf           TEXT NOT NULL,
+    campanha_id   TEXT,
+    grupo         TEXT NOT NULL,           -- 'tratado' | 'controle'
+    atribuido_em  TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_uplift_atrib UNIQUE (experimento, cpf)
+);
+CREATE INDEX IF NOT EXISTS idx_uplift_atrib_exp ON uplift_atribuicoes (experimento);
+CREATE INDEX IF NOT EXISTS idx_uplift_atrib_cpf ON uplift_atribuicoes (cpf);

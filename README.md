@@ -27,6 +27,15 @@ Uma única aplicação (`agente_ia_control_desk.py`) que roda em três modos:
 - **ForecastService** — previsão de volume de chamadas (Prophet, com fallback estatístico).
 - **AuditService** — auditoria operacional (agentes improdutivos, campanhas paradas, mailing crítico).
 - **ReportService** — relatórios intraday em Excel + resumo por webhook.
+- **UpliftService** — mede o ganho de recuperação com grupo de controle (tratado × controle): atribuição determinística e estável por CPF, e relatório com uplift absoluto/relativo e teste de significância (duas proporções).
+
+### Medição de uplift (tratado × controle)
+
+Fluxo para provar ROI com grupo de controle — a métrica central da tese:
+
+1. `POST /uplift/experimentos` — cria o experimento com `pct_controle` (ex.: `0.2`).
+2. `POST /uplift/{exp}/atribuir` — atribui a carteira; cada CPF cai de forma **determinística e estável** em `tratado` ou `controle` (hash de `experimento+cpf`), então re-rodar não embaralha os grupos.
+3. `GET /uplift/{exp}/relatorio` — compara a taxa de recuperação dos dois grupos e retorna `uplift_abs_pp`, `uplift_rel_pct`, `z`, `p_valor` e `significante_95`.
 
 ---
 
@@ -108,6 +117,9 @@ Rotas de escrita de feriados exigem `role=admin`.
 | GET  | `/forecast` · POST `/forecast/gerar` | Previsão de volume |
 | POST | `/auditoria/executar` | Auditoria operacional |
 | GET  | `/alertas` | Histórico de alertas |
+| GET/POST | `/uplift/experimentos` | Lista/cria experimentos de uplift |
+| POST | `/uplift/{exp}/atribuir` | Atribui carteira a tratado/controle |
+| GET  | `/uplift/{exp}/relatorio` | Relatório de uplift (tratado × controle) |
 
 ---
 
@@ -154,7 +166,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   └── create_user.py          # cadastro de usuários da API (bcrypt)
 ├── tests/
 │   ├── test_core.py            # testes das funções puras
-│   └── test_config_security.py # validação de segurança + build do app
+│   ├── test_config_security.py # validação de segurança + build do app
+│   └── test_uplift.py          # estatística e atribuição de uplift
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
