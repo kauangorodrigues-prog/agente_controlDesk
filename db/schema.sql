@@ -244,3 +244,22 @@ CREATE TABLE IF NOT EXISTS uplift_atribuicoes (
 );
 CREATE INDEX IF NOT EXISTS idx_uplift_atrib_exp ON uplift_atribuicoes (experimento);
 CREATE INDEX IF NOT EXISTS idx_uplift_atrib_cpf ON uplift_atribuicoes (cpf);
+
+
+-- ------------------------------------------------------------
+-- 5. Dead Letter Queue (resiliência de jobs — Fase 2)
+-- ------------------------------------------------------------
+-- Recebe falhas terminais de jobs (após retries/timeout) para
+-- inspeção e reprocessamento manual: falha → DLQ → webhook → log.
+
+CREATE TABLE IF NOT EXISTS dead_letter_queue (
+    id              SERIAL PRIMARY KEY,
+    origem          TEXT NOT NULL,       -- nome do job/operação
+    correlation_id  TEXT,
+    erro            TEXT,
+    payload         TEXT,
+    tentativas      INTEGER,
+    criado_em       TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dlq_criado ON dead_letter_queue (criado_em);
+CREATE INDEX IF NOT EXISTS idx_dlq_origem ON dead_letter_queue (origem);

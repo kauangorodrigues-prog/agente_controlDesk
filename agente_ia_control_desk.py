@@ -4,6 +4,7 @@ from __future__ import annotations
 # IMPORTS GLOBAIS
 # ══════════════════════════════════════════════════════════════════════
 
+import concurrent.futures
 import contextvars
 import hashlib
 import json
@@ -92,6 +93,17 @@ class Config:
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
         # "plain" (padrão, compatível) ou "json" (logs estruturados Enterprise).
         self.LOG_FORMAT = os.getenv("LOG_FORMAT", "plain").lower()
+
+        # ── Resiliência de jobs (Fase 2) ────────────────────
+        # Timeout generoso por padrão (protege contra jobs presos, sem afetar
+        # jobs normais). Retry desligado por padrão (0) porque nem todo job é
+        # idempotente — habilite por job só quando for seguro.
+        self.JOB_TIMEOUT_SEG   = int(os.getenv("JOB_TIMEOUT_SEG",   "900"))
+        self.JOB_MAX_RETRIES   = int(os.getenv("JOB_MAX_RETRIES",   "0"))
+        self.RETRY_BASE_SEG    = float(os.getenv("RETRY_BASE_SEG",  "1.0"))
+        self.RETRY_MAX_SEG     = float(os.getenv("RETRY_MAX_SEG",   "30.0"))
+        self.CB_FAIL_THRESHOLD = int(os.getenv("CB_FAIL_THRESHOLD", "5"))
+        self.CB_RESET_SEG      = int(os.getenv("CB_RESET_SEG",      "60"))
 
         # ── CORS ────────────────────────────────────────────
         # Lista separada por vírgula; "*" libera todas as origens
@@ -404,7 +416,12 @@ def health_jobs() -> dict:
             pass
     with _JOB_STATS_LOCK:
         stats = {k: dict(v) for k, v in JOB_STATS.items()}
-    return {"scheduler_ativo": rodando, "agendados": agendados, "jobs": stats}
+    return {
+        "scheduler_ativo": rodando,
+        "agendados": agendados,
+        "jobs": stats,
+        "dlq_total": DeadLetterQueue.contar(),
+    }
 
 
 def health_ia() -> dict:
@@ -439,6 +456,153 @@ def health_geral() -> dict:
         "recursos": _recursos_sistema(),
         "ts": datetime.utcnow().isoformat(),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 3C. RESILIÊNCIA (timeout, retry, circuit breaker, DLQ)
+# ══════════════════════════════════════════════════════════════════════
+
+class CircuitBreakerOpen(Exception):
+    """Sinaliza que o circuit breaker está aberto e a chamada foi barrada."""
+
+
+# Executor dedicado para impor timeout em funções síncronas.
+_JOB_TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="jobtimeout"
+)
+
+
+def executar_com_timeout(fn, timeout_s: float, nome: str = ""):
+    """Executa fn com timeout. Propaga o contexto (correlation id) para a thread.
+
+    Limitação honesta: Python não permite matar uma thread à força — em caso de
+    timeout, paramos de esperar e sinalizamos, mas a thread pode seguir até o fim.
+    """
+    if not timeout_s or timeout_s <= 0:
+        return fn()
+    ctx = contextvars.copy_context()
+    fut = _JOB_TIMEOUT_EXECUTOR.submit(ctx.run, fn)
+    try:
+        return fut.result(timeout=timeout_s)
+    except concurrent.futures.TimeoutError:
+        raise TimeoutError(f"'{nome}' excedeu o timeout de {timeout_s}s")
+
+
+def retry_call(fn, max_retries: int = 3, base_delay: float = 1.0,
+               max_delay: float = 30.0, exceptions: tuple = (Exception,),
+               nome: str = "", on_retry=None):
+    """Executa fn com retry de backoff exponencial. Reutilizável por jobs e I/O."""
+    tentativa = 0
+    while True:
+        try:
+            return fn()
+        except exceptions as e:
+            tentativa += 1
+            if tentativa > max_retries:
+                raise
+            delay = min(base_delay * (2 ** (tentativa - 1)), max_delay)
+            if on_retry:
+                try:
+                    on_retry(tentativa, e)
+                except Exception:
+                    pass
+            log.warning(f"[Retry] '{nome}' tentativa {tentativa}/{max_retries} falhou: {e}. "
+                        f"Aguardando {delay:.1f}s")
+            time.sleep(delay)
+
+
+class CircuitBreaker:
+    """Circuit breaker CLOSED → OPEN → HALF_OPEN (thread-safe)."""
+
+    def __init__(self, fail_threshold: int = 5, reset_timeout: int = 60, nome: str = "cb"):
+        self.fail_threshold = fail_threshold
+        self.reset_timeout = reset_timeout
+        self.nome = nome
+        self.estado = "CLOSED"
+        self.falhas = 0
+        self.aberto_em = None
+        self._lock = threading.Lock()
+
+    def permitir(self) -> bool:
+        with self._lock:
+            if self.estado == "OPEN":
+                if self.aberto_em and (time.time() - self.aberto_em) >= self.reset_timeout:
+                    self.estado = "HALF_OPEN"
+                    return True
+                return False
+            return True
+
+    def registrar_sucesso(self):
+        with self._lock:
+            self.falhas = 0
+            self.estado = "CLOSED"
+            self.aberto_em = None
+
+    def registrar_falha(self):
+        with self._lock:
+            self.falhas += 1
+            if self.estado == "HALF_OPEN" or self.falhas >= self.fail_threshold:
+                self.estado = "OPEN"
+                self.aberto_em = time.time()
+
+    def chamar(self, fn):
+        if not self.permitir():
+            raise CircuitBreakerOpen(f"Circuit breaker '{self.nome}' aberto")
+        try:
+            resultado = fn()
+        except Exception:
+            self.registrar_falha()
+            raise
+        self.registrar_sucesso()
+        return resultado
+
+
+class DeadLetterQueue:
+    """Fila de mensagens mortas: persiste a falha terminal, alerta e loga.
+
+    Fluxo do prompt: falha → (retries) → DLQ → webhook → log.
+    """
+
+    @staticmethod
+    def registrar(origem: str, erro, payload=None, tentativas: int = None, alertar: bool = True):
+        cid = get_correlation_id()
+        try:
+            executar_comando(
+                """
+                INSERT INTO dead_letter_queue
+                    (origem, correlation_id, erro, payload, tentativas)
+                VALUES (:o, :c, :e, :p, :t)
+                """,
+                {"o": origem, "c": cid, "e": str(erro)[:2000],
+                 "p": (json.dumps(payload, default=str) if payload else None),
+                 "t": tentativas},
+            )
+        except Exception as ex:
+            log.error(f"[DLQ] Falha ao persistir ({origem}): {ex}")
+        log.error(f"[DLQ] origem={origem} correlation_id={cid} tentativas={tentativas} erro={erro}")
+        if alertar:
+            send_webhook_alert(
+                f"DLQ: *{origem}* falhou após {tentativas} tentativa(s). Erro: {str(erro)[:300]}",
+                nivel="CRITICO", chave=f"dlq_{origem}", throttle_seg=600,
+            )
+
+    @staticmethod
+    def listar(limite: int = 50) -> list:
+        try:
+            return executar_query(
+                "SELECT * FROM dead_letter_queue ORDER BY criado_em DESC LIMIT :l",
+                {"l": limite},
+            )
+        except Exception:
+            return []
+
+    @staticmethod
+    def contar() -> Optional[int]:
+        try:
+            r = executar_query("SELECT COUNT(*) AS n FROM dead_letter_queue")
+            return r[0]["n"] if r else 0
+        except Exception:
+            return None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1665,17 +1829,38 @@ class UpliftService:
 _scheduler = None
 
 
-def _safe_run(fn, nome: str):
+def _safe_run(fn, nome: str, timeout_s: float = None, max_retries: int = None):
+    """Executa um job com correlation id, timeout, retry opcional, métricas e DLQ.
+
+    Retrocompatível: com os defaults (retry=0), o comportamento observável é o
+    mesmo de antes — apenas ganha timeout de proteção, métricas e, em falha
+    terminal, registro na Dead Letter Queue (falha → DLQ → webhook → log).
+    """
     set_correlation_id()  # id único por execução (aparece nos logs)
+    timeout_s = CFG.JOB_TIMEOUT_SEG if timeout_s is None else timeout_s
+    max_retries = CFG.JOB_MAX_RETRIES if max_retries is None else max_retries
     inicio = time.perf_counter()
+
+    def _exec():
+        return executar_com_timeout(fn, timeout_s, nome)
+
     try:
-        fn()
+        if max_retries and max_retries > 0:
+            retry_call(_exec, max_retries=max_retries,
+                       base_delay=CFG.RETRY_BASE_SEG, max_delay=CFG.RETRY_MAX_SEG, nome=nome)
+        else:
+            _exec()
         registrar_execucao_job(nome, "ok", time.perf_counter() - inicio)
+    except TimeoutError as e:
+        registrar_execucao_job(nome, "timeout", time.perf_counter() - inicio, erro=str(e))
+        log.error(f"[Scheduler] Job '{nome}' TIMEOUT: {e}")
+        DeadLetterQueue.registrar(nome, e, tentativas=(max_retries or 0) + 1)
     except Exception:
         tb = traceback.format_exc()
         ultima_linha = tb.strip().splitlines()[-1] if tb.strip() else None
         registrar_execucao_job(nome, "erro", time.perf_counter() - inicio, erro=ultima_linha)
         log.error(f"[Scheduler] Job '{nome}' falhou:\n{tb}")
+        DeadLetterQueue.registrar(nome, ultima_linha, tentativas=(max_retries or 0) + 1)
 
 
 def iniciar_scheduler():
@@ -1865,6 +2050,11 @@ try:
     @app.get("/health/ia", tags=["Health"])
     def health_ia_ep():
         return health_ia()
+
+    # ── Dead Letter Queue (falhas terminais de jobs) ──
+    @app.get("/dlq", tags=["Health"], dependencies=[Depends(_verificar_token)])
+    def listar_dlq(limite: int = Query(50)):
+        return {"total": DeadLetterQueue.contar(), "itens": DeadLetterQueue.listar(limite)}
 
     # ── ETL
     @app.post("/etl/run", tags=["ETL"], dependencies=[Depends(_verificar_token)])

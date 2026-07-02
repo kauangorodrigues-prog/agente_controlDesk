@@ -169,7 +169,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── test_core.py            # testes das funções puras
 │   ├── test_config_security.py # validação de segurança + build do app
 │   ├── test_uplift.py          # estatística e atribuição de uplift
-│   └── test_observability.py   # logging JSON, registro de jobs, health
+│   ├── test_observability.py   # logging JSON, registro de jobs, health
+│   └── test_resilience.py      # retry, circuit breaker, timeout, DLQ
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -201,6 +202,17 @@ produção (em vez de `*`).
 - **Logs estruturados** — defina `LOG_FORMAT=json` para logs em JSON com `correlation_id` (e campos extras como `job_id`, `campaign_id`). O padrão (`plain`) mantém o formato legível de sempre. Toda requisição HTTP recebe/gera um `X-Request-ID`, propagado aos logs e devolvido no cabeçalho da resposta.
 
 > Tudo acima é **aditivo e retrocompatível**: nenhum endpoint ou comportamento existente mudou. Faz parte da Fase 1 da evolução Enterprise (observabilidade e prontidão para produção).
+
+## Resiliência de jobs (Fase 2)
+
+Toolkit reutilizável, aplicado ao wrapper `_safe_run` que já envolve todos os jobs:
+
+- **Timeout** (`JOB_TIMEOUT_SEG`, padrão 900s) — nenhum job fica preso indefinidamente. Limitação honesta: Python não mata threads à força; em timeout paramos de esperar e sinalizamos.
+- **Retry exponencial** (`retry_call`) — desligado por padrão (`JOB_MAX_RETRIES=0`) porque nem todo job é idempotente (o ETL atual faz `append`); habilite por job quando for seguro. O I/O HTTP também pode usá-lo.
+- **Circuit Breaker** (`CircuitBreaker`, CLOSED→OPEN→HALF_OPEN) para proteger dependências instáveis.
+- **Dead Letter Queue** — falha terminal de job vai para a tabela `dead_letter_queue`, dispara alerta `CRITICO` (throttled) e loga: **falha → DLQ → webhook → log**. Inspecione em `GET /dlq` (autenticado) e veja o total em `/health/jobs`.
+
+Configurável via `.env` (`JOB_TIMEOUT_SEG`, `JOB_MAX_RETRIES`, `RETRY_BASE_SEG`, `CB_FAIL_THRESHOLD`, `CB_RESET_SEG`).
 
 ## Integração contínua
 
