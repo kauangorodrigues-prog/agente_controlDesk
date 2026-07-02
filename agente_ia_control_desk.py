@@ -105,6 +105,12 @@ class Config:
         self.CB_FAIL_THRESHOLD = int(os.getenv("CB_FAIL_THRESHOLD", "5"))
         self.CB_RESET_SEG      = int(os.getenv("CB_RESET_SEG",      "60"))
 
+        # ── ETL Enterprise (Melhoria 1) ─────────────────────
+        # UPSERT idempotente para tabelas com chave natural (cai para append
+        # se o índice único não existir). Retenção de snapshots desligada (0).
+        self.ETL_UPSERT        = os.getenv("ETL_UPSERT", "true").lower() == "true"
+        self.ETL_RETENCAO_DIAS = int(os.getenv("ETL_RETENCAO_DIAS", "0"))
+
         # ── CORS ────────────────────────────────────────────
         # Lista separada por vírgula; "*" libera todas as origens
         # (aceitável só em desenvolvimento).
@@ -811,13 +817,108 @@ def send_webhook_alert(
 
 
 # ══════════════════════════════════════════════════════════════════════
+# 6B. REPOSITÓRIO ETL (Repository Pattern + UPSERT + Watermark)
+# ══════════════════════════════════════════════════════════════════════
+# Encapsula a persistência idempotente. Chave natural por tabela: tabelas
+# ausentes deste mapa continuam em append (séries temporais).
+
+ETL_CHAVES_NATURAIS = {
+    "calls":               ["call_id"],
+    "customers":           ["cpf"],
+    "collector_promessas": ["promessa_id"],
+}
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _ident(nome: str) -> str:
+    """Valida um identificador SQL (tabela/coluna) contra injeção."""
+    if not _IDENT_RE.match(str(nome)):
+        raise ValueError(f"Identificador SQL inválido: {nome!r}")
+    return nome
+
+
+class PostgresRepository:
+    """Camada de acesso a dados com UPSERT idempotente (ON CONFLICT)."""
+
+    @staticmethod
+    def _build_upsert_sql(tabela: str, cols: list, chaves: list) -> str:
+        _ident(tabela)
+        cols = [_ident(c) for c in cols]
+        chaves = [_ident(c) for c in chaves]
+        col_list = ", ".join(cols)
+        val_list = ", ".join(f":{c}" for c in cols)
+        conflito = ", ".join(chaves)
+        update_cols = [c for c in cols if c not in chaves]
+        if update_cols:
+            set_list = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+            do = f"DO UPDATE SET {set_list}"
+        else:
+            do = "DO NOTHING"
+        return f"INSERT INTO {tabela} ({col_list}) VALUES ({val_list}) ON CONFLICT ({conflito}) {do}"
+
+    @staticmethod
+    def _linhas(df: pd.DataFrame) -> list:
+        """Converte o DataFrame em dicts, tratando NaN→None e escalares numpy."""
+        df2 = df.astype(object).where(pd.notnull(df), None)
+        registros = df2.to_dict("records")
+        return [
+            {k: (v.item() if isinstance(v, np.generic) else v) for k, v in r.items()}
+            for r in registros
+        ]
+
+    @staticmethod
+    def upsert(tabela: str, df: pd.DataFrame, chaves: list) -> int:
+        """INSERT … ON CONFLICT(chaves) DO UPDATE. Idempotente por chave natural."""
+        if df is None or df.empty:
+            return 0
+        cols = list(df.columns)
+        faltando = [k for k in chaves if k not in cols]
+        if faltando:
+            raise ValueError(f"chaves {faltando} ausentes em {tabela}")
+        from sqlalchemy import text
+        sql = PostgresRepository._build_upsert_sql(tabela, cols, chaves)
+        linhas = PostgresRepository._linhas(df)
+        with get_db() as session:
+            session.execute(text(sql), linhas)
+        return len(linhas)
+
+
+class WatermarkRepository:
+    """Checkpoint incremental (CDC): último valor processado por fonte."""
+
+    @staticmethod
+    def get(fonte: str, default=None):
+        try:
+            r = executar_query("SELECT valor FROM etl_watermark WHERE fonte = :f", {"f": fonte})
+            return r[0]["valor"] if r else default
+        except Exception:
+            return default
+
+    @staticmethod
+    def set(fonte: str, valor) -> None:
+        try:
+            executar_comando(
+                """
+                INSERT INTO etl_watermark (fonte, valor, atualizado_em)
+                VALUES (:f, :v, NOW())
+                ON CONFLICT (fonte) DO UPDATE
+                    SET valor = EXCLUDED.valor, atualizado_em = NOW()
+                """,
+                {"f": fonte, "v": str(valor)},
+            )
+        except Exception as e:
+            log.debug(f"[Watermark] Falha ao gravar '{fonte}': {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # 7. ETL SERVICE
 # ══════════════════════════════════════════════════════════════════════
 
 class ETLService:
 
     @staticmethod
-    def _salvar(df: pd.DataFrame, tabela: str, schema_min: set = None) -> int:
+    def _salvar(df: pd.DataFrame, tabela: str, schema_min: set = None, chaves: list = None) -> int:
         if df is None or df.empty:
             log.warning(f"[ETL] DataFrame vazio — {tabela} não atualizada")
             return 0
@@ -828,6 +929,23 @@ class ETLService:
                 return 0
         df = df.copy()
         df["etl_ts"] = datetime.utcnow()
+
+        # ── Caminho idempotente (UPSERT por chave natural) ──
+        chaves = chaves or ETL_CHAVES_NATURAIS.get(tabela)
+        if CFG.ETL_UPSERT and chaves and all(k in df.columns for k in chaves):
+            # Dedup dentro do lote (mantém o registro mais recente por chave).
+            df_dedup = df.drop_duplicates(subset=chaves, keep="last")
+            try:
+                n = PostgresRepository.upsert(tabela, df_dedup, chaves)
+                log.info(f"[ETL] UPSERT {n} linha(s) → {tabela} (chaves={chaves})")
+                return n
+            except Exception as e:
+                # Ex.: índice único ausente na tabela legada → não perde dados,
+                # cai para o append tradicional e avisa como habilitar.
+                log.warning(f"[ETL] UPSERT indisponível em '{tabela}' ({e}); usando append. "
+                            f"Rode a migração de índices únicos para habilitar a idempotência.")
+
+        # ── Caminho append (compatível / séries temporais) ──
         try:
             df.to_sql(tabela, engine, if_exists="append", index=False, method="multi", chunksize=500)
             log.info(f"[ETL] {len(df)} linha(s) → {tabela}")
@@ -835,6 +953,25 @@ class ETLService:
         except Exception as e:
             log.error(f"[ETL] Erro ao salvar '{tabela}': {e}")
             return 0
+
+    @staticmethod
+    def compactar_snapshots(dias: int = None) -> dict:
+        """Retenção de séries temporais: remove snapshots antigos (compressão
+        de histórico). Desligado por padrão (ETL_RETENCAO_DIAS=0)."""
+        dias = CFG.ETL_RETENCAO_DIAS if dias is None else dias
+        if not dias or dias <= 0:
+            return {"status": "desabilitado"}
+        total = 0
+        for tabela in ("campaign_snapshot", "mailing_status", "agents"):
+            try:
+                total += executar_comando(
+                    f"DELETE FROM {_ident(tabela)} WHERE captured_at < NOW() - make_interval(days => :d)",
+                    {"d": dias},
+                )
+            except Exception as e:
+                log.error(f"[ETL] Compactação de '{tabela}': {e}")
+        log.info(f"[ETL] Retenção: {total} linha(s) antiga(s) removida(s) (> {dias} dias)")
+        return {"removidas": total, "dias": dias}
 
     @staticmethod
     def run_etl() -> dict:
@@ -853,14 +990,23 @@ class ETLService:
             log.error(f"[ETL] Falha agentes:\n{traceback.format_exc()}")
             resultado["agentes"] = 0
 
-        # Chamadas
+        # Chamadas (incremental via watermark / CDC)
         try:
             ontem = (date.today() - timedelta(days=1)).isoformat()
-            dados = DialerClient.get_calls(data_inicio=ontem)
+            desde = WatermarkRepository.get("calls", default=ontem)  # só registros novos
+            dados = DialerClient.get_calls(data_inicio=desde)
             df = pd.DataFrame(dados)
             if not df.empty and "telefone" in df.columns:
                 df["ddd"] = df["telefone"].astype(str).str.replace(r"\D", "", regex=True).str[:2]
             resultado["chamadas"] = ETLService._salvar(df, "calls", {"call_id", "status"})
+            # Avança o checkpoint para o maior iniciada_em processado.
+            if not df.empty and "iniciada_em" in df.columns:
+                try:
+                    maxdt = pd.to_datetime(df["iniciada_em"], errors="coerce").max()
+                    if pd.notnull(maxdt):
+                        WatermarkRepository.set("calls", maxdt.isoformat())
+                except Exception:
+                    pass
         except Exception:
             log.error(f"[ETL] Falha chamadas:\n{traceback.format_exc()}")
             resultado["chamadas"] = 0
@@ -1908,6 +2054,9 @@ def iniciar_scheduler():
     _scheduler.add_job(lambda: _safe_run(
         lambda: HolidayService.sincronizar_feriados_nacionais(), "Feriados"),
         CronTrigger(month=1, day=1, hour=0, minute=5), id="sync_feriados")
+
+    _scheduler.add_job(lambda: _safe_run(ETLService.compactar_snapshots, "Retenção"),
+        CronTrigger(hour=3, minute=20), id="retencao_snapshots")
 
     _scheduler.start()
     log.info(f"[Scheduler] {len(_scheduler.get_jobs())} jobs registrados.")

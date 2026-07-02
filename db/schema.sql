@@ -263,3 +263,21 @@ CREATE TABLE IF NOT EXISTS dead_letter_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_dlq_criado ON dead_letter_queue (criado_em);
 CREATE INDEX IF NOT EXISTS idx_dlq_origem ON dead_letter_queue (origem);
+
+
+-- ------------------------------------------------------------
+-- 6. ETL Enterprise (Melhoria 1): watermark + índices únicos
+-- ------------------------------------------------------------
+-- Checkpoint incremental (CDC): último valor processado por fonte.
+CREATE TABLE IF NOT EXISTS etl_watermark (
+    fonte          TEXT PRIMARY KEY,
+    valor          TEXT,
+    atualizado_em  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Índices únicos que habilitam o UPSERT idempotente (ON CONFLICT).
+-- Em bases legadas com duplicatas, remova-as antes de criar o índice.
+-- (Se ausentes, o ETL cai automaticamente para append — sem perda de dados.)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_calls_call_id      ON calls (call_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_cpf      ON customers (cpf);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_promessas_id       ON collector_promessas (promessa_id);

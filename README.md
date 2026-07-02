@@ -170,7 +170,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── test_config_security.py # validação de segurança + build do app
 │   ├── test_uplift.py          # estatística e atribuição de uplift
 │   ├── test_observability.py   # logging JSON, registro de jobs, health
-│   └── test_resilience.py      # retry, circuit breaker, timeout, DLQ
+│   ├── test_resilience.py      # retry, circuit breaker, timeout, DLQ
+│   └── test_etl.py             # UPSERT idempotente, dedup, watermark
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -213,6 +214,16 @@ Toolkit reutilizável, aplicado ao wrapper `_safe_run` que já envolve todos os 
 - **Dead Letter Queue** — falha terminal de job vai para a tabela `dead_letter_queue`, dispara alerta `CRITICO` (throttled) e loga: **falha → DLQ → webhook → log**. Inspecione em `GET /dlq` (autenticado) e veja o total em `/health/jobs`.
 
 Configurável via `.env` (`JOB_TIMEOUT_SEG`, `JOB_MAX_RETRIES`, `RETRY_BASE_SEG`, `CB_FAIL_THRESHOLD`, `CB_RESET_SEG`).
+
+## ETL idempotente (Melhoria 1)
+
+- **UPSERT idempotente** — para tabelas com chave natural (`calls`→`call_id`, `customers`→`cpf`, `collector_promessas`→`promessa_id`), o ETL faz `INSERT … ON CONFLICT DO UPDATE` via `PostgresRepository` (Repository Pattern), com **dedup dentro do lote**. Nunca insere o mesmo registro duas vezes.
+- **Fallback seguro** — se o índice único ainda não existir (base legada), cai automaticamente para o `append` de antes e avisa nos logs. **Sem perda de dados, sem regressão.** Habilite a idempotência rodando `db/schema.sql` (cria os índices únicos).
+- **Watermark / CDC** — a ingestão de `calls` é **incremental**: busca só registros novos desde o último `iniciada_em` processado (tabela `etl_watermark`), com *fallback* para D-1.
+- **Retenção de histórico** — `ETL.compactar_snapshots` remove snapshots antigos (job diário 03:20), **desligado por padrão** (`ETL_RETENCAO_DIAS=0`).
+- **Segurança** — identificadores SQL (tabela/coluna) são validados por regex contra injeção antes de compor o UPSERT.
+
+Configurável via `.env` (`ETL_UPSERT`, `ETL_RETENCAO_DIAS`).
 
 ## Integração contínua
 
