@@ -7,9 +7,11 @@ export const meta = { title: "Pacing", subtitle: "Ajuste automático da velocida
 
 export async function mount(root) {
   let horas = 24;
+  let campanhaId = "";
   root.innerHTML = `
     <div class="page-head">
       <div class="actions">
+        <select class="select" id="pac-camp" style="width:auto"><option value="">Todas as campanhas</option></select>
         <select class="select" id="pac-horas" style="width:auto">
           <option value="6">Últimas 6h</option>
           <option value="24" selected>Últimas 24h</option>
@@ -26,6 +28,18 @@ export async function mount(root) {
     </div>`;
 
   root.querySelector("#pac-horas").addEventListener("change", (e) => { horas = +e.target.value; load(); });
+  root.querySelector("#pac-camp").addEventListener("change", (e) => { campanhaId = e.target.value; load(); });
+  (async () => {
+    try {
+      const camps = await Api.campanhasConfig();
+      const sel = root.querySelector("#pac-camp");
+      (camps || []).forEach((c) => {
+        const o = document.createElement("option");
+        o.value = c.campanha_id; o.textContent = c.campanha_nome || c.campanha_id;
+        sel.appendChild(o);
+      });
+    } catch { /* silencioso */ }
+  })();
   root.querySelector("#pac-run").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true; btn.innerHTML = `<span class="spinner dark"></span> Ajustando…`;
@@ -44,7 +58,7 @@ export async function mount(root) {
   });
 
   async function load() {
-    const rows = await Api.pacingHistorico(horas).catch(() => []);
+    const rows = await Api.pacingHistorico(horas, campanhaId || undefined).catch(() => []);
     renderKpis(rows);
     renderTable(rows);
   }

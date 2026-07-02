@@ -116,12 +116,13 @@ function campanhasDesempenho() {
 }
 
 // ---------- Histórico de pacing ----------
-function pacingHistorico(horas = 24) {
+function pacingHistorico(horas = 24, campanhaId = null) {
   const rows = [];
   const n = ri(40, 90);
-  const motivos = ["ajuste_proporcional", "abandono_alto", "bloqueado_guardrail", "pausa_feriado"];
+  const pool = campanhaId ? CAMPANHAS.filter((c) => c.id === campanhaId) : CAMPANHAS;
+  const base = pool.length ? pool : CAMPANHAS;
   for (let i = 0; i < n; i++) {
-    const c = pick(CAMPANHAS);
+    const c = pick(base);
     const ant = +r(1, 8).toFixed(1);
     const bloqueado = Math.random() < 0.18;
     const motivo = bloqueado ? pick(["bloqueado_guardrail", "pausa_feriado"]) : pick(["ajuste_proporcional", "abandono_alto"]);
@@ -141,10 +142,12 @@ function pacingHistorico(horas = 24) {
 }
 
 // ---------- Mailing top ----------
-function mailingTop(n = 100) {
+function mailingTop(n = 100, campanhaId = null) {
   const rows = [];
+  const pool = campanhaId ? CAMPANHAS.filter((c) => c.id === campanhaId) : CAMPANHAS;
+  const base = pool.length ? pool : CAMPANHAS;
   for (let i = 0; i < n; i++) {
-    const c = pick(CAMPANHAS);
+    const c = pick(base);
     rows.push({
       cpf: fakeCPF(),
       telefone: fakeTel(),
@@ -302,9 +305,9 @@ export function mockResponse(method, path) {
   if (p === "/ocupacao/campanhas") return ocupacaoCampanhas();
   if (p === "/campanhas/config") return campanhasConfig();
   if (p === "/campanhas/desempenho") return campanhasDesempenho(); // extra p/ frontend
-  if (p === "/pacing/historico") return pacingHistorico(+(q.get("horas") || 24));
+  if (p === "/pacing/historico") return pacingHistorico(+(q.get("horas") || 24), q.get("campanha_id"));
   if (p === "/pacing/ajustar") return { resultado: pacingAjustarMock() };
-  if (p === "/mailing/top") return mailingTop(+(q.get("n") || 100));
+  if (p === "/mailing/top") return mailingTop(+(q.get("n") || 100), q.get("campanha_id"));
   if (p === "/mailing/processar") return { registros: ri(1200, 4800) };
   if (p === "/forecast") return forecast(24);
   if (p === "/forecast/gerar") return { periodos: +(q.get("periodos") || 24) };

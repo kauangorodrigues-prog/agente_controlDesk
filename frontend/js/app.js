@@ -14,9 +14,10 @@ import * as forecast from "./pages/forecast.js";
 import * as feriados from "./pages/feriados.js";
 import * as auditoria from "./pages/auditoria.js";
 import * as alertas from "./pages/alertas.js";
+import * as configuracoes from "./pages/configuracoes.js";
 
 const PAGES = {
-  dashboard, campanhas, pacing, mailing, forecast, feriados, auditoria, alertas,
+  dashboard, campanhas, pacing, mailing, forecast, feriados, auditoria, alertas, configuracoes,
 };
 
 const NAV = [
@@ -31,6 +32,8 @@ const NAV = [
   { id: "feriados", ...feriados.meta },
   { id: "auditoria", ...auditoria.meta },
   { id: "alertas", ...alertas.meta },
+  { section: "Sistema" },
+  { id: "configuracoes", ...configuracoes.meta },
 ];
 
 const app = document.getElementById("app");

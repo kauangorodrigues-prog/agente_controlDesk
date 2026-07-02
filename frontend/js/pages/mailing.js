@@ -8,11 +8,13 @@ export const meta = { title: "Mailing", subtitle: "Priorização inteligente de 
 
 export async function mount(root) {
   let limite = 100;
+  let campanhaId = "";
   let cache = [];
 
   root.innerHTML = `
     <div class="page-head">
       <div class="actions">
+        <select class="select" id="ml-camp" style="width:auto"><option value="">Todas as campanhas</option></select>
         <select class="select" id="ml-n" style="width:auto">
           <option value="50">Top 50</option>
           <option value="100" selected>Top 100</option>
@@ -33,6 +35,8 @@ export async function mount(root) {
     </div>`;
 
   root.querySelector("#ml-n").addEventListener("change", (e) => { limite = +e.target.value; load(); });
+  root.querySelector("#ml-camp").addEventListener("change", (e) => { campanhaId = e.target.value; load(); });
+  fillCampanhas(root.querySelector("#ml-camp"));
   root.querySelector("#ml-csv").addEventListener("click", () => {
     if (!cache.length) { toast("Nada para exportar", "warn"); return; }
     downloadCsv(`mailing_priorizado_${new Date().toISOString().slice(0, 10)}.csv`, cache, [
@@ -55,7 +59,7 @@ export async function mount(root) {
   });
 
   async function load() {
-    const rows = await Api.mailingTop(limite).catch(() => []);
+    const rows = await Api.mailingTop(limite, campanhaId || undefined).catch(() => []);
     cache = rows;
     renderKpis(rows);
     renderDist(rows);
@@ -107,6 +111,17 @@ export async function mount(root) {
   function scoreBadge(s) {
     const c = s >= 70 ? "green" : s >= 40 ? "yellow" : "red";
     return badge(fmt.num(s), c);
+  }
+
+  async function fillCampanhas(sel) {
+    try {
+      const camps = await Api.campanhasConfig();
+      (camps || []).forEach((c) => {
+        const o = document.createElement("option");
+        o.value = c.campanha_id; o.textContent = c.campanha_nome || c.campanha_id;
+        sel.appendChild(o);
+      });
+    } catch { /* silencioso */ }
   }
 
   await load();
