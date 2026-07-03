@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════════
 // ATLAS · Control Desk IA — bootstrap do SPA
 // ══════════════════════════════════════════════════════════════════
-import { CONFIG, Demo } from "./config.js";
+import { CONFIG, Demo, REFRESH_OPTIONS, getRefreshMs, setRefreshMs } from "./config.js";
 import { Api, login, getToken, getUser, clearSession } from "./api.js";
 import { $, el, toast } from "./ui.js";
 import { icon, logoMark } from "./icons.js";
@@ -40,7 +40,7 @@ const app = document.getElementById("app");
 let current = { onRefresh: null };
 let refreshTimer = null;
 let clockTimer = null;
-let autoRefresh = true;
+let refreshMs = getRefreshMs();   // intervalo escolhido (0 = desligado)
 
 // ══════════════════════════════════════════════════════════════════
 // Login
@@ -118,9 +118,11 @@ function renderApp() {
           </div>
           <span class="spacer"></span>
           <span class="clock hide-sm" id="clock"></span>
-          <label class="switch hide-sm" title="Atualização automática">
-            <input type="checkbox" id="auto-refresh" ${autoRefresh ? "checked" : ""}>
-            <span class="track"></span> Auto
+          <label class="refresh-select hide-sm" title="Intervalo de atualização automática">
+            ${icon("clock")}
+            <select id="refresh-interval">
+              ${REFRESH_OPTIONS.map((o) => `<option value="${o.ms}" ${o.ms === refreshMs ? "selected" : ""}>${o.label}</option>`).join("")}
+            </select>
           </label>
           <button class="btn btn-ghost btn-icon" id="refresh-btn" title="Atualizar agora">${icon("refresh")}</button>
           <div class="avatar" id="avatar" title="${user?.username || ""} (${user?.role || ""})">${initials}</div>
@@ -138,10 +140,18 @@ function renderApp() {
   $("#logout-btn").addEventListener("click", doLogout);
   $("#refresh-btn").addEventListener("click", () => { doRefresh(true); });
   $("#menu-toggle").addEventListener("click", toggleSidebar);
-  $("#auto-refresh").addEventListener("change", (e) => {
-    autoRefresh = e.target.checked;
+  $("#refresh-interval").addEventListener("change", (e) => {
+    refreshMs = parseInt(e.target.value, 10) || 0;
+    setRefreshMs(refreshMs);
     setupRefreshTimer();
-    toast(autoRefresh ? "Auto-atualização ativada" : "Auto-atualização pausada", "info", 1800);
+    const opt = REFRESH_OPTIONS.find((o) => o.ms === refreshMs);
+    toast(refreshMs === 0 ? "Atualização automática desligada" : `Atualização automática: ${opt ? opt.label : refreshMs / 1000 + "s"}`, "info", 2000);
+  });
+
+  // Pausa/retoma o timer quando a aba perde/ganha foco
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { if (refreshTimer) clearInterval(refreshTimer); refreshTimer = null; }
+    else setupRefreshTimer();
   });
 
   startClock();
@@ -193,10 +203,25 @@ async function navigate(pageId) {
 // Auto-refresh / relógio / status
 // ══════════════════════════════════════════════════════════════════
 function setupRefreshTimer() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  if (autoRefresh) refreshTimer = setInterval(() => doRefresh(false), CONFIG.refreshMs);
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  if (refreshMs > 0 && !document.hidden) {
+    refreshTimer = setInterval(() => doRefresh(false), refreshMs);
+  }
 }
+
+// Enquanto o usuário está interagindo, adiar o refresh automático evita
+// que o conteúdo seja recriado sob os pés dele (rolagem, filtros, modais).
+function usuarioInteragindo() {
+  if (document.querySelector(".modal-backdrop")) return true;       // modal aberto
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return true; // digitando/escolhendo
+  const tt = document.querySelector(".chart-tooltip");
+  if (tt && tt.style.opacity === "1") return true;                   // tooltip de gráfico visível
+  return false;
+}
+
 async function doRefresh(manual) {
+  if (!manual && (document.hidden || usuarioInteragindo())) return;  // não interrompe o usuário
   if (typeof current.onRefresh === "function") {
     const btn = $("#refresh-btn");
     if (manual && btn) btn.querySelector("svg")?.style.setProperty("animation", "spin .7s linear");
@@ -206,10 +231,15 @@ async function doRefresh(manual) {
   refreshDbStatus();
   refreshAlertCount();
 }
+
 function startClock() {
   if (clockTimer) clearInterval(clockTimer);
-  const tick = () => { const c = $("#clock"); if (c) c.textContent = new Date().toLocaleTimeString("pt-BR"); };
-  tick(); clockTimer = setInterval(tick, 1000);
+  // Mostra HH:MM (sem segundos) e atualiza a cada 30s — sem "piscar" a cada segundo.
+  const tick = () => {
+    const c = $("#clock");
+    if (c) c.textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  };
+  tick(); clockTimer = setInterval(tick, 30_000);
 }
 function stopTimers() {
   if (refreshTimer) clearInterval(refreshTimer);

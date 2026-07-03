@@ -355,6 +355,12 @@ button { font-family: inherit; cursor: pointer; }
 .content { padding: 28px; flex: 1; }
 .content.wide { max-width: 1500px; }
 
+/* Seletor de intervalo de atualização */
+.refresh-select { display: inline-flex; align-items: center; gap: 7px; color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border); border-radius: 100px; padding: 5px 12px 5px 13px; }
+.refresh-select svg { width: 15px; height: 15px; opacity: .8; }
+.refresh-select select { appearance: none; background: transparent; border: none; color: var(--text-soft); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; outline: none; padding-right: 2px; }
+.refresh-select select option { background: var(--surface-2); color: var(--text); }
+
 /* Auto-refresh toggle */
 .switch { position: relative; display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 12.5px; color: var(--text-dim); user-select: none; }
 .switch input { display: none; }
