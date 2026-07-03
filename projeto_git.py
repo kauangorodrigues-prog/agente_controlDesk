@@ -1366,12 +1366,42 @@ try:
         pacing_especial: Optional[float] = None
         observacao:      Optional[str] = None
 
+    # `from __future__ import annotations` transforma as anotações em strings;
+    # ao rodar como __main__ o Pydantic precisa reconstruir o modelo para
+    # gerar o schema OpenAPI (/docs e /openapi.json). Sem isso, /openapi.json
+    # retorna 500. Compatível com Pydantic v1 (update_forward_refs) e v2.
+    try:
+        FeriadoIn.model_rebuild()
+    except AttributeError:
+        try:
+            FeriadoIn.update_forward_refs()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         log.info("=== Agente IA Control Desk iniciando ===")
-        iniciar_scheduler()
+        # O scheduler roda pipelines de fundo (ETL, ocupação, pacing...) que
+        # dependem do banco. Se o banco não estiver disponível — ou se for
+        # desligado via env — a API e o frontend continuam funcionando
+        # normalmente (a interface opera em modo demonstração).
+        if os.getenv("DISABLE_SCHEDULER", "").lower() in ("1", "true", "yes"):
+            log.info("[Scheduler] Desativado (DISABLE_SCHEDULER).")
+        elif engine is None or not testar_conexao():
+            log.warning("[Scheduler] Banco indisponível — jobs de fundo desativados. "
+                        "API e frontend seguem ativos.")
+        else:
+            try:
+                iniciar_scheduler()
+            except Exception as e:
+                log.warning(f"[Scheduler] Falha ao iniciar (seguindo sem jobs): {e}")
         yield
-        parar_scheduler()
+        try:
+            parar_scheduler()
+        except Exception:
+            pass
 
     app = FastAPI(
         title="Agente IA Control Desk",
@@ -1835,19 +1865,35 @@ def rodar_dashboard():
 # 18. ENTRYPOINT
 # ══════════════════════════════════════════════════════════════════════
 
+def _rodar_api():
+    """Sobe a API FastAPI que serve também o frontend (SPA ATLAS) na raiz."""
+    import uvicorn
+    if not FASTAPI_DISPONIVEL:
+        log.error("FastAPI não instalado. Rode: pip install -r requirements.txt")
+        return
+    port   = int(os.getenv("PORT", "8000"))
+    host   = os.getenv("HOST", "0.0.0.0")
+    reload = os.getenv("RELOAD", "").lower() in ("1", "true", "yes")
+    log.info(f"🚀 Servindo ATLAS em http://{host}:{port}/  (API em /docs · status em /health)")
+    if reload:
+        # reload precisa do caminho de import do módulo (derivado do arquivo)
+        modulo = os.path.splitext(os.path.basename(__file__))[0]
+        uvicorn.run(f"{modulo}:app", host=host, port=port, reload=True)
+    else:
+        # passa o objeto app diretamente — mais robusto, sem string de import
+        uvicorn.run(app, host=host, port=port)
+
+
 if __name__ == "__main__":
     import sys
+    modo = sys.argv[1] if len(sys.argv) > 1 else "api"
 
-    if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
-        # python agente_ia_control_desk.py dashboard
+    if modo == "dashboard":
+        # python projeto_git.py dashboard  → dashboard Streamlit (legado)
         rodar_dashboard()
-    elif len(sys.argv) > 1 and sys.argv[1] == "api":
-        # python agente_ia_control_desk.py api
-        import uvicorn
-        uvicorn.run("agente_ia_control_desk:app", host="0.0.0.0", port=8000, reload=True)
-    else:
-        # python agente_ia_control_desk.py  → modo standalone com scheduler
-        log.info("🚀 Iniciando Agente IA Control Desk — modo standalone")
+    elif modo in ("standalone", "scheduler"):
+        # python projeto_git.py standalone → apenas os jobs de fundo
+        log.info("🚀 Iniciando Agente IA Control Desk — modo standalone (scheduler)")
         send_webhook_alert("🤖 Agente IA Control Desk iniciado.", nivel="INFO", chave="startup", forcar=True)
         iniciar_scheduler()
         log.info("Scheduler rodando. Pressione Ctrl+C para encerrar.")
@@ -1857,3 +1903,6 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             parar_scheduler()
             log.info("Agente encerrado.")
+    else:
+        # python projeto_git.py  (ou 'api')  → API + frontend (padrão)
+        _rodar_api()
