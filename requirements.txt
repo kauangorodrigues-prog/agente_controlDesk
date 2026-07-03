@@ -1,0 +1,38 @@
+# ══════════════════════════════════════════════════════════════════
+# agente_controlDesk — dependências (backend + API que serve o frontend)
+# Instale com:  pip install -r requirements.txt
+# ══════════════════════════════════════════════════════════════════
+
+# --- Núcleo de dados ---
+pandas>=2.0
+numpy>=1.24
+requests>=2.31
+
+# --- Banco de dados ---
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9        # driver PostgreSQL
+
+# --- API (FastAPI serve também o frontend em /app/) ---
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9     # formulários OAuth2 (login)
+python-jose[cryptography]>=3.3   # JWT
+passlib[bcrypt]>=1.7        # hash de senha
+prometheus-client>=0.20     # /metrics
+
+# --- Agendador e feriados ---
+APScheduler>=3.10
+holidays>=0.45
+
+# --- Configuração ---
+python-dotenv>=1.0
+
+# --- Relatórios (exportação Excel) ---
+openpyxl>=3.1
+
+# --- Dashboard Streamlit (opcional, modo legado) ---
+streamlit>=1.30
+plotly>=5.18
+
+# --- Forecast avançado (opcional; há fallback sazonal embutido) ---
+# prophet>=1.1

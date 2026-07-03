@@ -1330,6 +1330,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
     from fastapi.responses import Response
+    from fastapi.staticfiles import StaticFiles
     from jose import JWTError, jwt
     from passlib.context import CryptContext
     from pydantic import BaseModel
@@ -1365,12 +1366,42 @@ try:
         pacing_especial: Optional[float] = None
         observacao:      Optional[str] = None
 
+    # `from __future__ import annotations` transforma as anotações em strings;
+    # ao rodar como __main__ o Pydantic precisa reconstruir o modelo para
+    # gerar o schema OpenAPI (/docs e /openapi.json). Sem isso, /openapi.json
+    # retorna 500. Compatível com Pydantic v1 (update_forward_refs) e v2.
+    try:
+        FeriadoIn.model_rebuild()
+    except AttributeError:
+        try:
+            FeriadoIn.update_forward_refs()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         log.info("=== Agente IA Control Desk iniciando ===")
-        iniciar_scheduler()
+        # O scheduler roda pipelines de fundo (ETL, ocupação, pacing...) que
+        # dependem do banco. Se o banco não estiver disponível — ou se for
+        # desligado via env — a API e o frontend continuam funcionando
+        # normalmente (a interface opera em modo demonstração).
+        if os.getenv("DISABLE_SCHEDULER", "").lower() in ("1", "true", "yes"):
+            log.info("[Scheduler] Desativado (DISABLE_SCHEDULER).")
+        elif engine is None or not testar_conexao():
+            log.warning("[Scheduler] Banco indisponível — jobs de fundo desativados. "
+                        "API e frontend seguem ativos.")
+        else:
+            try:
+                iniciar_scheduler()
+            except Exception as e:
+                log.warning(f"[Scheduler] Falha ao iniciar (seguindo sem jobs): {e}")
         yield
-        parar_scheduler()
+        try:
+            parar_scheduler()
+        except Exception:
+            pass
 
     app = FastAPI(
         title="Agente IA Control Desk",
@@ -1391,9 +1422,15 @@ try:
         return {"access_token": _criar_token({"sub": form.username, "role": rows[0]["role"]}), "token_type": "bearer"}
 
     # ── Sistema
-    @app.get("/", tags=["Sistema"])
+    # OBS: a raiz "/" é servida pelo frontend (index.html) — ver montagem
+    # do StaticFiles no fim deste bloco. O status fica em /health e /api.
+    @app.get("/health", tags=["Sistema"])
     def health():
         return {"status": "running", "versao": "2.0.0", "banco": testar_conexao()}
+
+    @app.get("/api", tags=["Sistema"])
+    def api_info():
+        return {"status": "running", "versao": "2.0.0", "banco": testar_conexao(), "docs": "/docs"}
 
     @app.get("/metrics", tags=["Sistema"])
     def metrics():
@@ -1521,6 +1558,90 @@ try:
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
     def config_campanhas():
         return executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE ORDER BY campanha_nome")
+
+    @app.get("/campanhas/desempenho", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
+    def desempenho_campanhas():
+        """Desempenho consolidado do dia por campanha (usado pelo dashboard)."""
+        try:
+            df = pd.read_sql(
+                """
+                SELECT s.campanha_id,
+                       s.campanha,
+                       MAX(s.agentes_logados)                       AS agentes,
+                       COALESCE(c.acionamentos, 0)                  AS acionamentos,
+                       COALESCE(c.cpcs, 0)                          AS cpcs,
+                       COALESCE(c.rpcs, 0)                          AS rpcs,
+                       CASE WHEN COALESCE(c.acionamentos, 0) > 0
+                            THEN ROUND(c.cpcs::numeric / c.acionamentos * 100, 1)
+                            ELSE 0 END                              AS cpc_pct,
+                       ROUND(AVG(s.ociosidade_pct)::numeric, 1)     AS ociosidade,
+                       ROUND(AVG(s.abandono_pct)::numeric, 1)       AS abandono,
+                       MIN(s.mailing_restante_pct)                  AS mailing_restante,
+                       ROUND(AVG(s.pacing_atual)::numeric, 1)       AS pacing_medio,
+                       MAX(UPPER(s.status))                         AS status
+                FROM campaign_snapshot s
+                LEFT JOIN (
+                    SELECT campanha_id,
+                           COUNT(*)                                             AS acionamentos,
+                           SUM(CASE WHEN tipo_resultado = 'CPC' THEN 1 ELSE 0 END) AS cpcs,
+                           SUM(CASE WHEN tipo_resultado = 'RPC' THEN 1 ELSE 0 END) AS rpcs
+                    FROM calls
+                    WHERE DATE(iniciada_em) = CURRENT_DATE
+                    GROUP BY campanha_id
+                ) c ON c.campanha_id = s.campanha_id
+                WHERE DATE(s.captured_at) = CURRENT_DATE
+                GROUP BY s.campanha_id, s.campanha, c.acionamentos, c.cpcs, c.rpcs
+                ORDER BY acionamentos DESC
+                """,
+                engine,
+            )
+            return df.to_dict("records") if not df.empty else []
+        except Exception as e:
+            log.error(f"[API] desempenho_campanhas: {e}")
+            return []
+
+    # ── Auditoria: agentes sem produção (> 30 min logados, 0 ligações)
+    @app.get("/auditoria/improdutivos", tags=["Auditoria"], dependencies=[Depends(_verificar_token)])
+    def auditoria_improdutivos():
+        try:
+            df = pd.read_sql(
+                """
+                SELECT a.nome, a.campanha,
+                       ROUND(EXTRACT(EPOCH FROM (NOW() - a.login_em)) / 60) AS min_logado,
+                       COALESCE(l.ligacoes, 0) AS ligacoes
+                FROM agents a
+                LEFT JOIN (
+                    SELECT agente_id, COUNT(*) AS ligacoes
+                    FROM calls WHERE DATE(iniciada_em) = CURRENT_DATE GROUP BY agente_id
+                ) l ON a.agente_id = l.agente_id
+                WHERE a.captured_at >= NOW() - INTERVAL '5 minutes'
+                  AND LOWER(a.status) NOT IN ('paused', 'offline')
+                  AND COALESCE(l.ligacoes, 0) = 0
+                  AND EXTRACT(EPOCH FROM (NOW() - a.login_em)) / 60 > 30
+                ORDER BY min_logado DESC
+                """,
+                engine,
+            )
+            return df.to_dict("records") if not df.empty else []
+        except Exception as e:
+            log.error(f"[API] auditoria_improdutivos: {e}")
+            return []
+
+    # ── Frontend estático (SPA ATLAS) ───────────────────────────────
+    # Servido DIRETO NA RAIZ "/" — ao abrir a porta encaminhada (GitHub
+    # Codespaces / proxy), o app carrega imediatamente, sem redirecionamentos
+    # nem subpaths. As rotas da API acima têm precedência (foram registradas
+    # antes deste mount); tudo o mais é servido pelos arquivos do frontend.
+    # Mantém-se /app/ como alias para compatibilidade.
+    _FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+    if os.path.isdir(_FRONTEND_DIR):
+        # Este mount DEVE ser o último registrado, pois "/" captura tudo
+        # que não casou com uma rota da API.
+        app.mount("/app", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend-alias")
+        app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
+        log.info(f"[Frontend] SPA ATLAS servida na raiz /  ({_FRONTEND_DIR})")
+    else:
+        log.warning("[Frontend] Diretório 'frontend/' não encontrado — SPA não montada.")
 
     FASTAPI_DISPONIVEL = True
 
@@ -1744,19 +1865,35 @@ def rodar_dashboard():
 # 18. ENTRYPOINT
 # ══════════════════════════════════════════════════════════════════════
 
+def _rodar_api():
+    """Sobe a API FastAPI que serve também o frontend (SPA ATLAS) na raiz."""
+    import uvicorn
+    if not FASTAPI_DISPONIVEL:
+        log.error("FastAPI não instalado. Rode: pip install -r requirements.txt")
+        return
+    port   = int(os.getenv("PORT", "8000"))
+    host   = os.getenv("HOST", "0.0.0.0")
+    reload = os.getenv("RELOAD", "").lower() in ("1", "true", "yes")
+    log.info(f"🚀 Servindo ATLAS em http://{host}:{port}/  (API em /docs · status em /health)")
+    if reload:
+        # reload precisa do caminho de import do módulo (derivado do arquivo)
+        modulo = os.path.splitext(os.path.basename(__file__))[0]
+        uvicorn.run(f"{modulo}:app", host=host, port=port, reload=True)
+    else:
+        # passa o objeto app diretamente — mais robusto, sem string de import
+        uvicorn.run(app, host=host, port=port)
+
+
 if __name__ == "__main__":
     import sys
+    modo = sys.argv[1] if len(sys.argv) > 1 else "api"
 
-    if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
-        # python agente_ia_control_desk.py dashboard
+    if modo == "dashboard":
+        # python projeto_git.py dashboard  → dashboard Streamlit (legado)
         rodar_dashboard()
-    elif len(sys.argv) > 1 and sys.argv[1] == "api":
-        # python agente_ia_control_desk.py api
-        import uvicorn
-        uvicorn.run("agente_ia_control_desk:app", host="0.0.0.0", port=8000, reload=True)
-    else:
-        # python agente_ia_control_desk.py  → modo standalone com scheduler
-        log.info("🚀 Iniciando Agente IA Control Desk — modo standalone")
+    elif modo in ("standalone", "scheduler"):
+        # python projeto_git.py standalone → apenas os jobs de fundo
+        log.info("🚀 Iniciando Agente IA Control Desk — modo standalone (scheduler)")
         send_webhook_alert("🤖 Agente IA Control Desk iniciado.", nivel="INFO", chave="startup", forcar=True)
         iniciar_scheduler()
         log.info("Scheduler rodando. Pressione Ctrl+C para encerrar.")
@@ -1766,3 +1903,6 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             parar_scheduler()
             log.info("Agente encerrado.")
+    else:
+        # python projeto_git.py  (ou 'api')  → API + frontend (padrão)
+        _rodar_api()
