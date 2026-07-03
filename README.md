@@ -22,6 +22,7 @@ O agente é um pacote Python (`control_desk/`) com três formas de execução:
 - **holidays.py** / **pacing.py** — guardrails de horário/feriado e ajuste automático de pacing por campanha.
 - **mailing.py** — validação de CPF/telefone e scoring de priorização de discagem.
 - **discagem.py** — modelo de ML (GradientBoosting) que aprende a melhor janela de horário/dia por DDD para maximizar CPC, persistido em disco.
+- **alo_analyzer.py** — analisador de qualidade das ligações entregues pela operadora (ALO / NÃO ALO). Classifica cada chamada (ALO REAL, NÃO ALO, URA, CAIXA POSTAL, SECRETÁRIA, MUDO, RUÍDO, OCUPADO, OPERADORA, DISCADOR) combinando transcrição, contexto e metadados (CDR/SIP/AMD), detecta atraso na entrega, falso ALO / falso NÃO ALO, calcula métricas de tempo, score final (0-100) e recomendações. Usa Claude (`claude-opus-4-8`, saída JSON estruturada) quando `ANTHROPIC_API_KEY` está configurada, com **fallback automático para uma heurística offline** — ver seção abaixo.
 - **audit.py** — auditoria operacional (agentes improdutivos, campanhas paradas, mailing crítico).
 - **reports.py** — relatório intraday em Excel (campanhas, produção por operador, timeline hora-a-hora) + envio por e-mail.
 - **forecast.py** — previsão de volume de chamadas (Prophet, com fallback automático por média móvel).
@@ -39,6 +40,53 @@ python main.py api      # API REST em :8000
 # ou
 streamlit run dashboard_app.py   # dashboard visual
 ```
+
+## Analisador de ligações ALO / NÃO ALO
+
+O módulo `control_desk/alo_analyzer.py` avalia **exclusivamente a qualidade da
+ligação entregue pela operadora ao discador** (não avalia o operador humano).
+Para cada ligação responde às 13 tarefas do prompt-mestre: houve ALO?, grau de
+confiança, classificação, justificativa, quem desligou, atraso na entrega e seu
+prejuízo, entrega da operadora, indícios de falha, probabilidade de a falha ser
+da operadora/discador/agente e evidências — além de métricas de tempo, score
+final e recomendações.
+
+Dois modos, com *fallback* transparente:
+
+- **IA (Claude)** — quando o pacote `anthropic` está instalado e
+  `ANTHROPIC_API_KEY` está definida (`ALO_USAR_IA=true`, padrão). Usa
+  `claude-opus-4-8` com saída estruturada em JSON.
+- **Heurística offline** — regras sobre palavras-chave de ALO, marcadores de
+  não-ALO e metadados (CDR/SIP/AMD). É o *fallback* automático sem chave, sem
+  rede ou em caso de erro da API. Roda sem dependências externas.
+
+Uso via código:
+
+```python
+from control_desk.alo_analyzer import ANALISADOR, Ligacao, Turno
+
+lig = Ligacao(
+    operadora="Claro", amd="Humano", duracao_total_seg=38,
+    tempo_ate_conexao_seg=4.3, tempo_silencio_seg=2.8, transferencia=True,
+    turnos=[
+        Turno("Cliente", "Alô?", inicio_seg=1.2),
+        Turno("Cliente", "Tem alguém aí?", inicio_seg=4.5),
+        Turno("Agente", "Boa tarde, falo com a senhora Maria?", inicio_seg=6.0),
+    ],
+)
+resultado = ANALISADOR.analisar(lig)      # respeita ALO_USAR_IA
+print(resultado.to_dict())
+```
+
+Uso via API (modo `python main.py api`):
+
+```bash
+curl -X POST http://localhost:8000/alo/analisar \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"operadora":"Claro","amd":"Humano","turnos":[{"falante":"cliente","texto":"Alô","inicio_seg":1.2}]}'
+```
+
+Testes (offline, determinísticos): `python -m tests.test_alo_analyzer`.
 
 ## web/ — Control Desk IA (helpdesk interno)
 

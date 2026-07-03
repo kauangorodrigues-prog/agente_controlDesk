@@ -34,6 +34,11 @@ class Config:
         self.EMAIL_SENHA   = os.getenv("EMAIL_SENHA", "")
         self.EMAIL_DESTINOS = os.getenv("EMAIL_DESTINOS", "")
 
+        # ── Analisador de ligações ALO / NÃO ALO (IA) ────────
+        self.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+        self.ANTHROPIC_MODEL   = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+        self.ALO_USAR_IA       = os.getenv("ALO_USAR_IA", "true").lower() == "true"
+
         # ── JWT (API) ─────────────────────────────────────────
         self.JWT_SECRET_KEY     = os.getenv("JWT_SECRET_KEY", "TROQUE_EM_PRODUCAO")
         self.JWT_ALGORITHM      = os.getenv("JWT_ALGORITHM", "HS256")
@@ -111,6 +116,10 @@ def gerar_env_example() -> None:
         "EMAIL_USER=",
         "EMAIL_SENHA=",
         "EMAIL_DESTINOS=supervisao@empresa.com,gerencia@empresa.com",
+        "",
+        "ANTHROPIC_API_KEY=",
+        "ANTHROPIC_MODEL=claude-opus-4-8",
+        "ALO_USAR_IA=true",
         "",
         "JWT_SECRET_KEY=troque-por-uma-chave-secreta-forte",
         "JWT_ALGORITHM=HS256",

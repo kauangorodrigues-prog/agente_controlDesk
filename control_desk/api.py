@@ -49,6 +49,32 @@ try:
             raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
         return payload
 
+    class TurnoIn(BaseModel):
+        falante: str = "cliente"
+        texto: str = ""
+        inicio_seg: Optional[float] = None
+
+    class LigacaoIn(BaseModel):
+        numero_chamado: str = ""
+        numero_origem: str = ""
+        data: str = ""
+        hora: str = ""
+        operadora: str = ""
+        duracao_total_seg: float = 0.0
+        tempo_ate_conexao_seg: float = 0.0
+        tempo_fala_seg: float = 0.0
+        tempo_silencio_seg: float = 0.0
+        tempo_espera_seg: float = 0.0
+        tempo_transferencia_seg: float = 0.0
+        tempo_ate_primeiro_alo_seg: Optional[float] = None
+        codigo_encerramento: str = ""
+        causa_sip: str = ""
+        amd: str = ""
+        transferencia: bool = False
+        transcricao: str = ""
+        turnos: list[TurnoIn] = []
+        usar_ia: Optional[bool] = None
+
     class FeriadoIn(BaseModel):
         data: str
         nome: str
@@ -225,6 +251,14 @@ try:
         sql += " ORDER BY ts DESC LIMIT :lim"
         params["lim"] = limite
         return executar_query(sql, params)
+
+    # ── Análise de ligações (ALO / NÃO ALO) ───────────────────────────────
+    @app.post("/alo/analisar", tags=["ALO"], dependencies=[Depends(_verificar_token)])
+    def analisar_ligacao(body: LigacaoIn):
+        from .alo_analyzer import ANALISADOR
+        payload = body.dict()
+        usar_ia = payload.pop("usar_ia", None)
+        return ANALISADOR.analisar_dict(payload, usar_ia=usar_ia)
 
     # ── Campanhas ─────────────────────────────────────────────────────────
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])

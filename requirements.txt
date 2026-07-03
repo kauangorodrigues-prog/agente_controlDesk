@@ -23,6 +23,11 @@ pydantic
 streamlit
 plotly
 
+# ── Analisador de ligações ALO / NÃO ALO ─────────────────────────────────
+# Opcional: sem o pacote (ou sem ANTHROPIC_API_KEY) o analisador cai
+# automaticamente na heurística offline, sem gerar erro.
+anthropic
+
 # ── Opcionais ──────────────────────────────────────────────────────────────
 holidays          # sincronização automática de feriados nacionais
 
