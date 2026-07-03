@@ -232,39 +232,63 @@ function feriadosProximos(dias = 30) {
 }
 
 // ---------- Alertas ----------
+// Preenche os marcadores {..} de um template com valores realistas.
+function fillMsg(tpl) {
+  const map = {
+    "{p}":    r(3, 24).toFixed(1),
+    "{a}":    ri(20, 40),
+    "{t}":    ri(120, 160),
+    "{camp}": pick(CAMPANHAS).nome,
+    "{nome}": pick(NOMES),
+    "{nome2}": pick(NOMES),
+    "{x}":    r(1, 4).toFixed(1),
+    "{y}":    r(4, 8).toFixed(1),
+    "{n}":    ri(2, 6),
+    "{hh}":   String(ri(8, 20)).padStart(2, "0"),
+    "{c}":    ri(300, 1200),
+    "{min}":  ri(12, 45),
+  };
+  return tpl.replace(/\{\w+\}/g, (m) => (m in map ? map[m] : m));
+}
+
 function alertas(limite = 50) {
+  const mk = (nivel, tpl, chave, minutosAtras) => ({
+    nivel, mensagem: fillMsg(tpl), chave, canal: "webhook", enviado: true,
+    ts: new Date(Date.now() - minutosAtras * 60000).toISOString(),
+  });
+
+  // ── Alertas em destaque (sempre presentes) ────────────────────────
+  const destaques = [
+    // Previsão de ociosidade
+    mk("ATENCAO", "Previsão de ociosidade: *{p}%* previstos para as {hh}:00 — carteira {camp}", "previsao_ociosidade", ri(1, 6)),
+    // Mailing acabando
+    mk("CRITICO", "Mailing *{camp}* acabando: *{p}%* restante (~{min} min no ritmo atual)", "mailing_acabando", ri(2, 9)),
+    // Operadores muito tempo tabulando
+    mk("ATENCAO", "*{n} operador(es)* em tabulação há mais de {min} min: {nome}, {nome2}", "tabulacao_longa", ri(1, 7)),
+    // Muitos operadores em pausa na carteira
+    mk("ATENCAO", "Carteira *{camp}*: *{n} operadores* em pausa ({p}% da operação)", "pausa_carteira", ri(3, 11)),
+  ];
+
+  // ── Demais alertas operacionais ───────────────────────────────────
   const templates = [
     ["ATENCAO", "Ociosidade em *{p}%* (limite 15.0%) — Ociosos: {a}/{t}", "ociosidade_alta"],
     ["ATENCAO", "Agentes em pausa > 20 min: {nome}", "pausa_longa"],
-    ["CRITICO", "Mailing *{camp}*: apenas *{p}%* restante", "auditoria"],
-    ["INFO", "Pacing *{camp}* ajustado: {x} → {y} ↑", "pacing"],
+    ["CRITICO", "Mailing *{camp}*: apenas *{p}%* restante", "mailing_critico"],
+    ["INFO", "Ritmo de discagem de *{camp}* ajustado: {x} → {y} ↑", "discagem"],
     ["INFO", "Campanha *{camp}* pausada — Feriado: Corpus Christi", "pausa_feriado"],
     ["ATENCAO", "*{n} campanha(s) parada(s)*: {camp}", "auditoria"],
     ["INFO", "*Intraday {hh}:00* — Acionamentos: *{a}* | CPCs: *{c}* ({p}%)", "relatorio_intraday"],
     ["CRITICO", "Abandono em *{p}%* na campanha {camp} (limite 8.0%)", "abandono"],
+    ["ATENCAO", "Operador em tabulação há {min} min: {nome} — carteira {camp}", "tabulacao_longa"],
   ];
-  const rows = [];
-  const n = Math.min(limite, ri(18, 40));
+
+  const rows = [...destaques];
+  const n = Math.min(Math.max(limite - destaques.length, 4), ri(16, 34));
   for (let i = 0; i < n; i++) {
     const [nivel, tpl, chave] = pick(templates);
-    const camp = pick(CAMPANHAS).nome;
-    const msg = tpl
-      .replace("{p}", r(3, 24).toFixed(1))
-      .replace("{a}", ri(20, 40))
-      .replace("{t}", ri(120, 160))
-      .replace("{camp}", camp)
-      .replace("{nome}", pick(NOMES))
-      .replace("{x}", r(1, 4).toFixed(1))
-      .replace("{y}", r(4, 8).toFixed(1))
-      .replace("{n}", ri(1, 3))
-      .replace("{hh}", String(ri(8, 20)).padStart(2, "0"))
-      .replace("{c}", ri(300, 1200));
-    rows.push({
-      nivel, mensagem: msg, chave, canal: "webhook", enviado: true,
-      ts: new Date(Date.now() - i * ri(3, 25) * 60000).toISOString(),
-    });
+    rows.push(mk(nivel, tpl, chave, ri(4, 26) + i));
   }
-  return rows.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  return rows.sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, limite);
 }
 
 // ---------- Auditoria ----------
@@ -316,7 +340,11 @@ export function mockResponse(method, path) {
   if (p === "/feriados/sincronizar") return { sincronizados: 14 };
   if (p === "/auditoria/executar") return auditoria();
   if (p === "/auditoria/improdutivos") return agentesImprodutivos(); // extra
-  if (p === "/alertas") return alertas(+(q.get("limite") || 50));
+  if (p === "/alertas") {
+    let a = alertas(+(q.get("limite") || 50));
+    const nv = q.get("nivel");
+    return nv ? a.filter((x) => x.nivel === nv.toUpperCase()) : a;
+  }
   if (p === "/etl/run") return { resultado: { agentes: ri(100, 160), chamadas: ri(8000, 20000), campanhas: 5, mailing: 5, clientes: ri(3000, 9000), promessas: ri(50, 300) } };
   // POST feriados / DELETE etc.
   if (p.startsWith("/feriados") && (method === "POST" || method === "DELETE"))

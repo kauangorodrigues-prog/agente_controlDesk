@@ -3,7 +3,7 @@ import { Api } from "../api.js";
 import { kpi, badge, empty, skeletonKpis, fmt, escapeHtml, table, toast } from "../ui.js";
 import { icon } from "../icons.js";
 
-export const meta = { title: "Pacing", subtitle: "Ajuste automático da velocidade de discagem", icon: "gauge" };
+export const meta = { title: "Discagem", subtitle: "Pacing — ajuste automático da velocidade de discagem", icon: "gauge" };
 
 export async function mount(root) {
   let horas = 24;

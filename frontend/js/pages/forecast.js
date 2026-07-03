@@ -4,7 +4,7 @@ import { kpi, empty, skeletonKpis, fmt, toast } from "../ui.js";
 import { icon } from "../icons.js";
 import { lineChart, barChart, riskColor } from "../charts.js";
 
-export const meta = { title: "Forecast", subtitle: "Previsão de volume e dimensionamento de equipe", icon: "trending" };
+export const meta = { title: "Previsão", subtitle: "Forecast de volume e dimensionamento de equipe", icon: "trending" };
 
 export async function mount(root) {
   root.innerHTML = `
