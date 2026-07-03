@@ -300,7 +300,7 @@ export function mockResponse(method, path) {
   const p = path.split("?")[0];
   const q = new URLSearchParams(path.split("?")[1] || "");
 
-  if (p === "/" ) return health();
+  if (p === "/" || p === "/health") return health();
   if (p === "/ocupacao") return ocupacao();
   if (p === "/ocupacao/campanhas") return ocupacaoCampanhas();
   if (p === "/campanhas/config") return campanhasConfig();

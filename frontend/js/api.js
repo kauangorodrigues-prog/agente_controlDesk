@@ -145,7 +145,7 @@ function decodeJwt(token) {
 
 // ---------- Endpoints tipados ----------
 export const Api = {
-  health:            () => request("GET", "/", { auth: false }),
+  health:            () => request("GET", "/health", { auth: false }),
 
   ocupacao:          () => request("GET", "/ocupacao"),
   ocupacaoCampanhas: () => request("GET", "/ocupacao/campanhas"),

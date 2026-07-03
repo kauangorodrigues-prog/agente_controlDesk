@@ -7,11 +7,18 @@ Interface web completa, dinâmica e responsiva (tema **preto & laranja**, inspir
 no sistema **ATLAS** da Roveri Cobrança) em `frontend/`. Não requer etapa de build.
 
 ```bash
-# Servido pelo próprio backend FastAPI
-python projeto_git.py api          # → http://localhost:8000/app/
+pip install -r requirements.txt
 
-# Ou standalone (modo demonstração, login admin/admin)
+# Backend + frontend unificados (a raiz redireciona para o app)
+python projeto_git.py api          # → http://localhost:8000/  (SPA ATLAS)
+#                                     http://localhost:8000/docs (API)
+#                                     http://localhost:8000/health (status)
+
+# Ou frontend standalone (modo demonstração, login admin/admin)
 cd frontend && python -m http.server 8137   # → http://localhost:8137/
 ```
 
-Consulte [`frontend/README.md`](frontend/README.md) para detalhes.
+O FastAPI serve o frontend em `/app/` e **redireciona a raiz `/` para o app**,
+além de expor toda a API (ocupação, pacing, mailing, forecast, feriados,
+auditoria, alertas) consumida pela interface. Consulte
+[`frontend/README.md`](frontend/README.md) para detalhes.

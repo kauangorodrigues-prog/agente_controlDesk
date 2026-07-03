@@ -39,12 +39,12 @@ inspirado no design do sistema **ATLAS** (Roveri Cobrança). Tema **preto & lara
 O `projeto_git.py` monta este diretório automaticamente:
 
 ```bash
-pip install fastapi uvicorn python-jose passlib[bcrypt] prometheus-client
+pip install -r requirements.txt
 python projeto_git.py api
 ```
 
-Acesse: **http://localhost:8000/app/**
-(A API continua nas rotas originais; a documentação em `/docs`.)
+Acesse a **raiz** — ela redireciona para o app: **http://localhost:8000/**
+(app em `/app/`, documentação da API em `/docs`, status em `/health`).
 
 ### Opção 2 — Servidor estático (sem backend / apenas demonstração)
 

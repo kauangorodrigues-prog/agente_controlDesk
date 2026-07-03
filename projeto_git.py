@@ -1392,7 +1392,12 @@ try:
         return {"access_token": _criar_token({"sub": form.username, "role": rows[0]["role"]}), "token_type": "bearer"}
 
     # ── Sistema
-    @app.get("/", tags=["Sistema"])
+    @app.get("/", include_in_schema=False)
+    def _root():
+        # Ao abrir a URL base, redireciona para o app (SPA ATLAS)
+        return RedirectResponse(url="/app/")
+
+    @app.get("/health", tags=["Sistema"])
     def health():
         return {"status": "running", "versao": "2.0.0", "banco": testar_conexao()}
 
@@ -1522,6 +1527,74 @@ try:
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
     def config_campanhas():
         return executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE ORDER BY campanha_nome")
+
+    @app.get("/campanhas/desempenho", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
+    def desempenho_campanhas():
+        """Desempenho consolidado do dia por campanha (usado pelo dashboard)."""
+        try:
+            df = pd.read_sql(
+                """
+                SELECT s.campanha_id,
+                       s.campanha,
+                       MAX(s.agentes_logados)                       AS agentes,
+                       COALESCE(c.acionamentos, 0)                  AS acionamentos,
+                       COALESCE(c.cpcs, 0)                          AS cpcs,
+                       COALESCE(c.rpcs, 0)                          AS rpcs,
+                       CASE WHEN COALESCE(c.acionamentos, 0) > 0
+                            THEN ROUND(c.cpcs::numeric / c.acionamentos * 100, 1)
+                            ELSE 0 END                              AS cpc_pct,
+                       ROUND(AVG(s.ociosidade_pct)::numeric, 1)     AS ociosidade,
+                       ROUND(AVG(s.abandono_pct)::numeric, 1)       AS abandono,
+                       MIN(s.mailing_restante_pct)                  AS mailing_restante,
+                       ROUND(AVG(s.pacing_atual)::numeric, 1)       AS pacing_medio,
+                       MAX(UPPER(s.status))                         AS status
+                FROM campaign_snapshot s
+                LEFT JOIN (
+                    SELECT campanha_id,
+                           COUNT(*)                                             AS acionamentos,
+                           SUM(CASE WHEN tipo_resultado = 'CPC' THEN 1 ELSE 0 END) AS cpcs,
+                           SUM(CASE WHEN tipo_resultado = 'RPC' THEN 1 ELSE 0 END) AS rpcs
+                    FROM calls
+                    WHERE DATE(iniciada_em) = CURRENT_DATE
+                    GROUP BY campanha_id
+                ) c ON c.campanha_id = s.campanha_id
+                WHERE DATE(s.captured_at) = CURRENT_DATE
+                GROUP BY s.campanha_id, s.campanha, c.acionamentos, c.cpcs, c.rpcs
+                ORDER BY acionamentos DESC
+                """,
+                engine,
+            )
+            return df.to_dict("records") if not df.empty else []
+        except Exception as e:
+            log.error(f"[API] desempenho_campanhas: {e}")
+            return []
+
+    # ── Auditoria: agentes sem produção (> 30 min logados, 0 ligações)
+    @app.get("/auditoria/improdutivos", tags=["Auditoria"], dependencies=[Depends(_verificar_token)])
+    def auditoria_improdutivos():
+        try:
+            df = pd.read_sql(
+                """
+                SELECT a.nome, a.campanha,
+                       ROUND(EXTRACT(EPOCH FROM (NOW() - a.login_em)) / 60) AS min_logado,
+                       COALESCE(l.ligacoes, 0) AS ligacoes
+                FROM agents a
+                LEFT JOIN (
+                    SELECT agente_id, COUNT(*) AS ligacoes
+                    FROM calls WHERE DATE(iniciada_em) = CURRENT_DATE GROUP BY agente_id
+                ) l ON a.agente_id = l.agente_id
+                WHERE a.captured_at >= NOW() - INTERVAL '5 minutes'
+                  AND LOWER(a.status) NOT IN ('paused', 'offline')
+                  AND COALESCE(l.ligacoes, 0) = 0
+                  AND EXTRACT(EPOCH FROM (NOW() - a.login_em)) / 60 > 30
+                ORDER BY min_logado DESC
+                """,
+                engine,
+            )
+            return df.to_dict("records") if not df.empty else []
+        except Exception as e:
+            log.error(f"[API] auditoria_improdutivos: {e}")
+            return []
 
     # ── Frontend estático (SPA ATLAS) ───────────────────────────────
     # Servido em /app/ — a API permanece em suas rotas originais.
