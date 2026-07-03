@@ -43,8 +43,9 @@ pip install -r requirements.txt
 python projeto_git.py api
 ```
 
-Acesse a **raiz** — ela redireciona para o app: **http://localhost:8000/**
-(app em `/app/`, documentação da API em `/docs`, status em `/health`).
+O app é servido **direto na raiz**: **http://localhost:8000/**
+(também disponível em `/app/`; documentação da API em `/docs`, status em `/health`).
+Ao usar porta encaminhada (Codespaces/proxy), basta abrir a URL da porta 8000.
 
 ### Opção 2 — Servidor estático (sem backend / apenas demonstração)
 

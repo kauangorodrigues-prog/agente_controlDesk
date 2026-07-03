@@ -1329,7 +1329,7 @@ try:
     from fastapi import Depends, FastAPI, HTTPException, Query, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-    from fastapi.responses import Response, RedirectResponse
+    from fastapi.responses import Response
     from fastapi.staticfiles import StaticFiles
     from jose import JWTError, jwt
     from passlib.context import CryptContext
@@ -1392,14 +1392,15 @@ try:
         return {"access_token": _criar_token({"sub": form.username, "role": rows[0]["role"]}), "token_type": "bearer"}
 
     # ── Sistema
-    @app.get("/", include_in_schema=False)
-    def _root():
-        # Ao abrir a URL base, redireciona para o app (SPA ATLAS)
-        return RedirectResponse(url="/app/")
-
+    # OBS: a raiz "/" é servida pelo frontend (index.html) — ver montagem
+    # do StaticFiles no fim deste bloco. O status fica em /health e /api.
     @app.get("/health", tags=["Sistema"])
     def health():
         return {"status": "running", "versao": "2.0.0", "banco": testar_conexao()}
+
+    @app.get("/api", tags=["Sistema"])
+    def api_info():
+        return {"status": "running", "versao": "2.0.0", "banco": testar_conexao(), "docs": "/docs"}
 
     @app.get("/metrics", tags=["Sistema"])
     def metrics():
@@ -1597,15 +1598,18 @@ try:
             return []
 
     # ── Frontend estático (SPA ATLAS) ───────────────────────────────
-    # Servido em /app/ — a API permanece em suas rotas originais.
+    # Servido DIRETO NA RAIZ "/" — ao abrir a porta encaminhada (GitHub
+    # Codespaces / proxy), o app carrega imediatamente, sem redirecionamentos
+    # nem subpaths. As rotas da API acima têm precedência (foram registradas
+    # antes deste mount); tudo o mais é servido pelos arquivos do frontend.
+    # Mantém-se /app/ como alias para compatibilidade.
     _FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
     if os.path.isdir(_FRONTEND_DIR):
-        @app.get("/app", include_in_schema=False)
-        def _app_redirect():
-            return RedirectResponse(url="/app/")
-
-        app.mount("/app", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
-        log.info(f"[Frontend] SPA ATLAS disponível em /app/  ({_FRONTEND_DIR})")
+        # Este mount DEVE ser o último registrado, pois "/" captura tudo
+        # que não casou com uma rota da API.
+        app.mount("/app", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend-alias")
+        app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
+        log.info(f"[Frontend] SPA ATLAS servida na raiz /  ({_FRONTEND_DIR})")
     else:
         log.warning("[Frontend] Diretório 'frontend/' não encontrado — SPA não montada.")
 
