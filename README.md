@@ -78,7 +78,29 @@ resultado = ANALISADOR.analisar(lig)      # respeita ALO_USAR_IA
 print(resultado.to_dict())
 ```
 
-Uso via API (modo `python main.py api`):
+### Integração com o discador (Olos) e persistência
+
+O módulo `control_desk/alo_service.py` liga o analisador aos conectores e ao
+banco: puxa CDR + transcrição do Olos (`OlosClient.get_call` /
+`get_call_transcription` / `get_calls_para_alo`), mapeia cada registro em uma
+`Ligacao` (tolerando variações de nome de campo entre versões da API),
+analisa, persiste na tabela `alo_analises` (criada automaticamente) e agrega
+estatísticas por classificação e por operadora. Sem banco configurado a análise
+ainda roda — apenas não persiste. O scheduler roda o lote a cada 15 minutos
+(job `alo`).
+
+### Endpoints da API (modo `python main.py api`)
+
+Todos autenticados via JWT (`Authorization: Bearer <token>`), tag **ALO** em
+`/docs`:
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/alo/analisar` | Analisa uma ligação enviada no corpo (metadados + `transcricao` ou `turnos`). |
+| `GET`  | `/alo/call/{call_id}` | Puxa a chamada do Olos, analisa e persiste. |
+| `POST` | `/alo/processar` | Processa em lote as chamadas recentes (`?desde=YYYY-MM-DD&limite=200`). |
+| `GET`  | `/alo/historico` | Últimas análises (`?classificacao=&operadora=&limite=`). |
+| `GET`  | `/alo/estatisticas` | Agregados por classificação/operadora (`?dias=1`). |
 
 ```bash
 curl -X POST http://localhost:8000/alo/analisar \
@@ -86,7 +108,12 @@ curl -X POST http://localhost:8000/alo/analisar \
   -d '{"operadora":"Claro","amd":"Humano","turnos":[{"falante":"cliente","texto":"Alô","inicio_seg":1.2}]}'
 ```
 
-Testes (offline, determinísticos): `python -m tests.test_alo_analyzer`.
+No dashboard Streamlit, a aba **📞 ALO** mostra score médio, ALO real, atrasos,
+falsos positivos/negativos, distribuição por classificação e qualidade por
+operadora, com botão para processar o lote sob demanda.
+
+Testes (offline, determinísticos): `python -m tests.test_alo_analyzer` e
+`python -m tests.test_alo_service`.
 
 ## web/ — Control Desk IA (helpdesk interno)
 

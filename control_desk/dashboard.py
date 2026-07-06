@@ -21,6 +21,7 @@ def rodar_dashboard() -> None:
         print("Streamlit/Plotly não instalados. Rode: pip install streamlit plotly")
         return
 
+    from .alo_service import AloService
     from .audit import AuditService
     from .discagem import DISCAGEM
 
@@ -48,9 +49,9 @@ def rodar_dashboard() -> None:
         except Exception:
             return pd.DataFrame()
 
-    aba1, aba2, aba3, aba4, aba5, aba6, aba7 = st.tabs([
+    aba1, aba2, aba3, aba4, aba5, aba6, aba7, aba8 = st.tabs([
         "📊 Tempo Real", "📋 Campanhas", "⚙️ Pacing Log",
-        "📈 Forecast", "🗓️ Feriados", "🔍 Auditoria", "🧠 Discagem",
+        "📈 Forecast", "🗓️ Feriados", "🔍 Auditoria", "🧠 Discagem", "📞 ALO",
     ])
 
     # ── Aba 1: Tempo Real
@@ -260,6 +261,57 @@ def rodar_dashboard() -> None:
                     st.dataframe(pd.DataFrame(janelas), use_container_width=True, hide_index=True)
                 else:
                     st.warning("Sem previsão disponível para esse DDD.")
+
+    # ── Aba 8: Análise de Ligações (ALO / NÃO ALO)
+    with aba8:
+        st.subheader("📞 Qualidade das Ligações da Operadora (ALO / NÃO ALO)")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            dias_alo = st.number_input("Janela (dias)", min_value=1, max_value=30, value=1)
+            if st.button("▶️ Processar lote agora"):
+                with st.spinner("Analisando ligações recentes..."):
+                    resumo = AloService.processar_lote()
+                st.success(f"{resumo['processadas']} ligação(ões) analisada(s).")
+                st.json(resumo)
+
+        est = AloService.estatisticas(dias=int(dias_alo))
+        if not est.get("disponivel"):
+            st.info("Sem dados de análise ainda. Rode o lote ou POST /alo/processar.")
+        else:
+            resumo = est.get("resumo", {})
+            n = int(resumo.get("n") or 0)
+            alo = int(resumo.get("alo") or 0)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Ligações analisadas", n)
+            m2.metric("ALO real", alo, delta=f"{round(alo / n * 100, 1) if n else 0}%")
+            m3.metric("Score médio", round(float(resumo.get("score_medio") or 0), 1))
+            m4.metric("Com atraso", int(resumo.get("com_atraso") or 0))
+            m5, m6 = st.columns(2)
+            m5.metric("Falsos positivos de ALO", int(resumo.get("falsos_positivos") or 0))
+            m6.metric("Falsos negativos de ALO", int(resumo.get("falsos_negativos") or 0))
+
+            df_cls = pd.DataFrame(est.get("por_classificacao", []))
+            if not df_cls.empty:
+                fig = px.bar(df_cls, x="classificacao", y="n", title="Ligações por classificação",
+                             color="score_medio", color_continuous_scale=["red", "yellow", "green"])
+                st.plotly_chart(fig, use_container_width=True)
+
+            df_op = pd.DataFrame(est.get("por_operadora", []))
+            if not df_op.empty:
+                st.markdown("**Qualidade por operadora**")
+                st.dataframe(df_op, use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("**Últimas análises**")
+        df_hist = _q(
+            "SELECT analisado_em, operadora, classificacao, houve_alo, score_final, "
+            "atraso_prejudicou, operadora_entregou FROM alo_analises "
+            "ORDER BY analisado_em DESC LIMIT 50"
+        )
+        if not df_hist.empty:
+            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Nenhuma análise persistida ainda.")
 
     if auto_refresh:
         time.sleep(30)

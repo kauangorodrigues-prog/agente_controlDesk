@@ -23,6 +23,7 @@ def iniciar_scheduler():
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
 
+    from .alo_service import AloService
     from .audit import AuditService
     from .discagem import treinar_async
     from .etl import ETLService
@@ -58,6 +59,9 @@ def iniciar_scheduler():
 
     _scheduler.add_job(lambda: _safe_run(AuditService.run_audit, "Auditoria"),
         IntervalTrigger(minutes=30), id="auditoria")
+
+    _scheduler.add_job(lambda: _safe_run(lambda: AloService.processar_lote(), "AnaliseALO"),
+        IntervalTrigger(minutes=15), id="alo")
 
     _scheduler.add_job(lambda: _safe_run(ReportService.pipeline_intraday, "Relatório"),
         CronTrigger(minute=0), id="relatorio")

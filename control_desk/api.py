@@ -260,6 +260,32 @@ try:
         usar_ia = payload.pop("usar_ia", None)
         return ANALISADOR.analisar_dict(payload, usar_ia=usar_ia)
 
+    @app.get("/alo/call/{call_id}", tags=["ALO"], dependencies=[Depends(_verificar_token)])
+    def analisar_call(call_id: str, persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None)):
+        from .alo_service import AloService
+        return AloService.analisar_call(call_id, persistir=persistir, usar_ia=usar_ia)
+
+    @app.post("/alo/processar", tags=["ALO"], dependencies=[Depends(_verificar_token)])
+    def processar_alo(
+        desde: Optional[str] = Query(None), limite: int = Query(200),
+        persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None),
+    ):
+        from .alo_service import AloService
+        return AloService.processar_lote(desde=desde, limite=limite, persistir=persistir, usar_ia=usar_ia)
+
+    @app.get("/alo/historico", tags=["ALO"], dependencies=[Depends(_verificar_token)])
+    def historico_alo(
+        limite: int = Query(100), classificacao: Optional[str] = Query(None),
+        operadora: Optional[str] = Query(None),
+    ):
+        from .alo_service import AloService
+        return AloService.historico(limite=limite, classificacao=classificacao, operadora=operadora)
+
+    @app.get("/alo/estatisticas", tags=["ALO"], dependencies=[Depends(_verificar_token)])
+    def estatisticas_alo(dias: int = Query(1)):
+        from .alo_service import AloService
+        return AloService.estatisticas(dias=dias)
+
     # ── Campanhas ─────────────────────────────────────────────────────────
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
     def config_campanhas():

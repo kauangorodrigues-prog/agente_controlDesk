@@ -84,6 +84,34 @@ class OlosClient:
         return d.get("calls", d if isinstance(d, list) else [])
 
     @classmethod
+    def get_call(cls, call_id: str) -> dict:
+        """Detalhe (CDR) de uma chamada específica."""
+        d = cls._get(f"/calls/{call_id}")
+        return d.get("call", d) if isinstance(d, dict) else {}
+
+    @classmethod
+    def get_call_transcription(cls, call_id: str) -> dict:
+        """Transcrição/turnos de uma chamada (para análise ALO / NÃO ALO)."""
+        d = cls._get(f"/calls/{call_id}/transcription")
+        return d if isinstance(d, dict) else {}
+
+    @classmethod
+    def get_calls_para_alo(cls, desde: str | None = None, limite: int = 200) -> list:
+        """Chamadas recentes com transcrição, candidatas à análise ALO.
+
+        Usa o endpoint dedicado ``/calls/transcriptions`` quando disponível e,
+        se ausente, cai no histórico padrão (``get_calls``).
+        """
+        params: dict = {"limit": limite}
+        if desde:
+            params["from"] = desde
+        d = cls._get("/calls/transcriptions", params=params)
+        calls = d.get("calls", d if isinstance(d, list) else [])
+        if calls:
+            return calls
+        return cls.get_calls(data_inicio=desde)
+
+    @classmethod
     def get_campaign_snapshot(cls) -> list:
         """Cache com TTL configurável — evita sobrecarregar a API do Olos."""
         entry = cls._cache.get("campaign_snapshot")
