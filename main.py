@@ -2,11 +2,13 @@
 
 Uso:
     python main.py                    # modo standalone: scheduler + health check HTTP (:8080/health)
-    python main.py api                # API FastAPI via uvicorn (:8000, docs em /docs)
+    python main.py api [porta]        # API FastAPI completa via uvicorn (:8000 por padrão, docs em /docs)
+    python main.py alo [porta]        # robô Analisador de Ligações ALO / NÃO ALO (:5501 por padrão)
     streamlit run dashboard_app.py    # dashboard Streamlit
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -33,14 +35,33 @@ def rodar_standalone() -> None:
         log.info("Agente encerrado.")
 
 
+def _porta(indice: int, env: str, padrao: int) -> int:
+    if len(sys.argv) > indice:
+        try:
+            return int(sys.argv[indice])
+        except ValueError:
+            pass
+    return int(os.getenv(env, str(padrao)))
+
+
 def rodar_api() -> None:
     import uvicorn
-    uvicorn.run("control_desk.api:app", host="0.0.0.0", port=8000, reload=True)
+    porta = _porta(2, "API_PORT", 8000)
+    log.info(f"🚀 API Control Desk em http://0.0.0.0:{porta} (docs em /docs)")
+    uvicorn.run("control_desk.api:app", host="0.0.0.0", port=porta, reload=False)
+
+
+def rodar_robo_alo() -> None:
+    from control_desk.alo_server import run
+    run(port=_porta(2, "ROBO_ALO_PORT", 5501))
 
 
 if __name__ == "__main__":
     gerar_env_example()
-    if len(sys.argv) > 1 and sys.argv[1] == "api":
+    modo = sys.argv[1] if len(sys.argv) > 1 else ""
+    if modo == "api":
         rodar_api()
+    elif modo == "alo":
+        rodar_robo_alo()
     else:
         rodar_standalone()
