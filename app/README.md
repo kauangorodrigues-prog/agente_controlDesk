@@ -18,6 +18,10 @@ serviço externo (banco de dados embutido em SQLite e autenticação local).
   partir da conversa.
 - **Base de Conhecimento** — artigos de suporte com busca, filtro por categoria,
   contagem de visualizações e CRUD completo (Markdown básico). Integrada ao Chat IA.
+- **Equipe / Usuários** — diretório de membros com estatísticas (total,
+  administradores, ativos nos últimos 30 dias); administradores podem criar
+  usuários, alterar papéis (admin/usuário) e remover contas, com proteção contra
+  auto-exclusão/rebaixamento.
 - **Relatórios** — volume de tickets, tempo de resolução, distribuição de
   prioridade e resumo executivo.
 - **Configurações** — perfil, notificações, aparência e segurança.

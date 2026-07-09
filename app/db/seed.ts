@@ -31,13 +31,43 @@ async function seedUsers() {
   if ((await count(users)) > 0) return;
   await getDb()
     .insert(users)
-    .values({
-      unionId: "seed-admin",
-      name: DEFAULT_ADMIN.name,
-      email: DEFAULT_ADMIN.email,
-      passwordHash: hashPassword(DEFAULT_ADMIN.password),
-      role: "admin",
-    });
+    .values([
+      {
+        unionId: "seed-admin",
+        name: DEFAULT_ADMIN.name,
+        email: DEFAULT_ADMIN.email,
+        passwordHash: hashPassword(DEFAULT_ADMIN.password),
+        role: "admin",
+      },
+      {
+        unionId: "seed-ana",
+        name: "Ana Pereira",
+        email: "ana.pereira@nexusai.com",
+        passwordHash: hashPassword("nexus123"),
+        role: "admin",
+      },
+      {
+        unionId: "seed-carlos",
+        name: "Carlos Silva",
+        email: "carlos.silva@nexusai.com",
+        passwordHash: hashPassword("nexus123"),
+        role: "user",
+      },
+      {
+        unionId: "seed-maria",
+        name: "Maria Santos",
+        email: "maria.santos@nexusai.com",
+        passwordHash: hashPassword("nexus123"),
+        role: "user",
+      },
+      {
+        unionId: "seed-joao",
+        name: "João Oliveira",
+        email: "joao.oliveira@nexusai.com",
+        passwordHash: hashPassword("nexus123"),
+        role: "user",
+      },
+    ]);
 }
 
 async function seedTickets() {

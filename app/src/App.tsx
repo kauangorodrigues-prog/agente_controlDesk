@@ -8,6 +8,7 @@ import Incidentes from './pages/Incidentes'
 import Relatorios from './pages/Relatorios'
 import Configuracoes from './pages/Configuracoes'
 import BaseConhecimento from './pages/BaseConhecimento'
+import Equipe from './pages/Equipe'
 import MainLayout from './components/MainLayout'
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/chat" element={<ChatIA />} />
         <Route path="/incidentes" element={<Incidentes />} />
         <Route path="/base-conhecimento" element={<BaseConhecimento />} />
+        <Route path="/equipe" element={<Equipe />} />
         <Route path="/relatorios" element={<Relatorios />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
       </Route>
