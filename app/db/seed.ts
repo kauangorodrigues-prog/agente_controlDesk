@@ -10,6 +10,7 @@ import {
   chatConversations,
   chatMessages,
   activities,
+  knowledgeArticles,
 } from "./schema";
 
 /** Default administrator account created on first boot. */
@@ -269,6 +270,87 @@ async function seedActivities() {
   await getDb().insert(activities).values(activityData);
 }
 
+async function seedKnowledge() {
+  if ((await count(knowledgeArticles)) > 0) return;
+  const articles = [
+    {
+      title: "Como reiniciar um servidor com segurança",
+      summary:
+        "Passo a passo para reiniciar servidores sem impacto para os usuários.",
+      category: "procedimentos" as const,
+      tags: "servidor, reiniciar, restart, manutenção",
+      content:
+        "## Reinício seguro de servidor\n\n1. **Notifique os usuários** com pelo menos 30 minutos de antecedência.\n2. **Verifique conexões ativas** e sessões críticas antes de prosseguir.\n3. **Encerre os serviços gracefully**, na ordem correta de dependência.\n4. **Execute o restart** e acompanhe a inicialização.\n5. **Valide os serviços** após o reinício e teste os acessos.\n\n**Tempo estimado de indisponibilidade:** 3-5 minutos.",
+    },
+    {
+      title: "Redefinição de senha corporativa",
+      summary: "Como redefinir sua senha pelo portal de autoatendimento.",
+      category: "acesso" as const,
+      tags: "senha, password, login, reset, acesso",
+      content:
+        "## Redefinir senha\n\n1. Acesse o portal: **portal.empresa.com/reset**\n2. Informe seu e-mail corporativo.\n3. Clique no link enviado ao seu e-mail.\n4. Crie uma nova senha seguindo as políticas:\n   - Mínimo de 8 caracteres\n   - Letras maiúsculas e minúsculas\n   - Pelo menos 1 número e 1 caractere especial\n\nSem acesso ao e-mail? Ligue para o suporte no ramal **8080**.",
+    },
+    {
+      title: "Diagnóstico de problemas de rede",
+      summary: "Checklist e comandos para diagnosticar falhas de conectividade.",
+      category: "rede" as const,
+      tags: "rede, network, internet, conexão, dns, ping",
+      content:
+        "## Diagnóstico de rede\n\n**Verificações iniciais**\n1. O cabo de rede está conectado? (LED da porta piscando)\n2. Reinicie o computador e o switch da mesa.\n3. Teste com outro cabo ou porta.\n\n**Comandos úteis**\n```\nipconfig /flushdns\nping 8.8.8.8\nnslookup portal.empresa.com\n```\n\nSe o problema persistir, abra um ticket para a equipe de infraestrutura.",
+    },
+    {
+      title: "Configuração da VPN corporativa",
+      summary: "Instalação e solução de problemas do cliente VPN.",
+      category: "rede" as const,
+      tags: "vpn, remoto, anyconnect, acesso remoto",
+      content:
+        "## VPN corporativa\n\n1. Baixe o **Cisco AnyConnect** no portal de software.\n2. Instale com privilégios de administrador.\n3. Servidor: **vpn.empresa.com**\n4. Use suas credenciais corporativas (domínio\\usuário).\n\n**Problemas comuns**\n- *Certificate invalid*: instale o certificado raiz corporativo.\n- *Timeout*: verifique se a porta 443 está liberada.\n- *Falha de autenticação*: confirme se sua conta tem VPN habilitada.",
+    },
+    {
+      title: "Política de backup e restauração de arquivos",
+      summary: "Frequência, retenção e como solicitar uma restauração.",
+      category: "procedimentos" as const,
+      tags: "backup, restaurar, restore, nas, arquivos",
+      content:
+        "## Backup e restauração\n\n**Frequência**\n- Incrementais: a cada 4 horas\n- Full: diariamente às 02:00\n- Retenção: 30 dias\n\n**Restaurar arquivos**\n1. Acesse **\\\\backup.empresa.com\\restores**\n2. Navegue até a data desejada.\n3. Selecione os arquivos e clique em *Restaurar*.\n4. Disponível em até 2h.\n\nUrgências: abra um ticket de prioridade **Alta** com o caminho completo e a justificativa.",
+    },
+    {
+      title: "Boas práticas de segurança contra phishing",
+      summary: "Como identificar e reportar e-mails suspeitos.",
+      category: "seguranca" as const,
+      tags: "phishing, segurança, email, golpe, security",
+      content:
+        "## Prevenção a phishing\n\n- Desconfie de e-mails que pedem senha ou dados bancários.\n- Verifique o remetente e passe o mouse sobre os links antes de clicar.\n- Nunca abra anexos inesperados.\n- Em caso de dúvida, encaminhe o e-mail para **seguranca@empresa.com** e não clique em nada.\n\nReportar rápido reduz o risco para toda a empresa.",
+    },
+    {
+      title: "Instalação de software homologado",
+      summary: "Como solicitar e instalar programas aprovados pela TI.",
+      category: "software" as const,
+      tags: "software, instalação, programas, licença",
+      content:
+        "## Instalação de software\n\n1. Consulte o **catálogo de software** no portal interno.\n2. Para itens do catálogo, use o **Centro de Software** da sua estação.\n3. Para itens fora do catálogo, abra um ticket categoria **Software** informando a justificativa de negócio.\n4. A TI valida licenciamento e compatibilidade antes de aprovar.",
+    },
+    {
+      title: "Monitor externo não é detectado",
+      summary: "Passos para resolver problemas de vídeo em monitores externos.",
+      category: "hardware" as const,
+      tags: "monitor, hdmi, vídeo, display, hardware",
+      content:
+        "## Monitor externo não detectado\n\n1. Verifique o cabo (HDMI/DisplayPort) e teste outra porta.\n2. Pressione **Win + P** e selecione *Estender* ou *Duplicar*.\n3. Atualize o driver de vídeo.\n4. Reinicie após atualizações do Windows.\n\nPersistindo, abra um ticket categoria **Hardware** com o modelo do notebook e do monitor.",
+    },
+  ];
+  await getDb()
+    .insert(knowledgeArticles)
+    .values(
+      articles.map((a) => ({
+        ...a,
+        status: "published" as const,
+        authorName: DEFAULT_ADMIN.name,
+        views: Math.floor(Math.random() * 120),
+      })),
+    );
+}
+
 /**
  * Populate the database with an admin account and demo data. Idempotent — each
  * table is only seeded when empty, so it is safe to run on every boot.
@@ -279,6 +361,7 @@ export async function ensureSeeded() {
   await seedIncidents();
   await seedChat();
   await seedActivities();
+  await seedKnowledge();
 }
 
 // Allow running `tsx db/seed.ts` (or the build output) directly.

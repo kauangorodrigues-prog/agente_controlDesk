@@ -103,6 +103,21 @@ function ensureSchema(db: Database.Database) {
       metadata TEXT,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS knowledge_articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      summary TEXT,
+      content TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'geral',
+      tags TEXT,
+      status TEXT NOT NULL DEFAULT 'published',
+      views INTEGER NOT NULL DEFAULT 0,
+      authorId INTEGER,
+      authorName TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }
 

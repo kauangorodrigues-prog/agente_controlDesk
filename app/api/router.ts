@@ -4,6 +4,7 @@ import { ticketRouter } from "./ticket-router";
 import { incidentRouter } from "./incident-router";
 import { chatRouter } from "./chat-router";
 import { reportRouter } from "./report-router";
+import { kbRouter } from "./kb-router";
 import { createRouter, publicQuery } from "./middleware";
 
 export const appRouter = createRouter({
@@ -14,6 +15,7 @@ export const appRouter = createRouter({
   incident: incidentRouter,
   chat: chatRouter,
   report: reportRouter,
+  kb: kbRouter,
 });
 
 export type AppRouter = typeof appRouter;

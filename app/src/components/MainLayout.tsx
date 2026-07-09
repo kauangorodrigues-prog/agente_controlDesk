@@ -5,6 +5,7 @@ import {
   Ticket,
   MessageSquare,
   AlertTriangle,
+  BookOpen,
   BarChart3,
   Settings,
   LogOut,
@@ -23,6 +24,7 @@ const navItems = [
   { path: "/tickets", label: "Tickets", icon: Ticket },
   { path: "/chat", label: "Chat IA", icon: MessageSquare },
   { path: "/incidentes", label: "Incidentes", icon: AlertTriangle },
+  { path: "/base-conhecimento", label: "Base de Conhecimento", icon: BookOpen },
   { path: "/relatorios", label: "Relatórios", icon: BarChart3 },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];

@@ -2,6 +2,7 @@ import { createRouter, publicQuery } from "./middleware";
 import { getDb } from "./queries/connection";
 import { chatConversations, chatMessages, tickets, sqliteNow } from "@db/schema";
 import { desc, eq } from "drizzle-orm";
+import { findRelevantArticle } from "./queries/kb";
 import { z } from "zod";
 
 // Mock AI responses for IT support
@@ -104,8 +105,14 @@ export const chatRouter = createRouter({
         content: message,
       });
 
-      // Generate AI response
-      const aiResponse = getAIResponse(message);
+      // Generate AI response, enriched with a relevant knowledge base article.
+      let aiResponse = getAIResponse(message);
+      const article = await findRelevantArticle(message);
+      if (article) {
+        aiResponse += `\n\n---\n📚 **Artigo relacionado na Base de Conhecimento:** ${article.title}${
+          article.summary ? `\n_${article.summary}_` : ""
+        }\n(Referência: KB #${article.id})`;
+      }
 
       // Save AI response
       await db.insert(chatMessages).values({

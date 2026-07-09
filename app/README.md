@@ -13,8 +13,11 @@ serviço externo (banco de dados embutido em SQLite e autenticação local).
   por categoria/status e monitor de status dos sistemas.
 - **Tickets** — CRUD completo com busca, filtros por status/prioridade e paginação.
 - **Incidentes** — registro e acompanhamento de incidentes com impacto e prioridade.
-- **Chat IA** — assistente virtual de suporte de TI com base de conhecimento e
-  criação de ticket a partir da conversa.
+- **Chat IA** — assistente virtual de suporte de TI que **consulta a Base de
+  Conhecimento** e cita o artigo relevante na resposta, além de criar ticket a
+  partir da conversa.
+- **Base de Conhecimento** — artigos de suporte com busca, filtro por categoria,
+  contagem de visualizações e CRUD completo (Markdown básico). Integrada ao Chat IA.
 - **Relatórios** — volume de tickets, tempo de resolução, distribuição de
   prioridade e resumo executivo.
 - **Configurações** — perfil, notificações, aparência e segurança.
@@ -68,7 +71,7 @@ app/
 ├── api/                 # Backend (Hono + tRPC)
 │   ├── boot.ts          # Entry point; inicializa o DB e monta as rotas
 │   ├── router.ts        # Composição dos routers tRPC
-│   ├── *-router.ts      # auth, dashboard, ticket, incident, chat, report
+│   ├── *-router.ts      # auth, dashboard, ticket, incident, chat, report, kb
 │   ├── kimi/            # Sessão JWT (assinatura/verificação) + auth por cookie
 │   ├── lib/             # env, password (scrypt), cookies, http, vite
 │   └── queries/         # Conexão SQLite (Drizzle) e queries de usuários

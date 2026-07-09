@@ -129,3 +129,33 @@ export const activities = sqliteTable("activities", {
 });
 
 export type Activity = typeof activities.$inferSelect;
+
+export const KB_CATEGORIES = [
+  "procedimentos",
+  "hardware",
+  "software",
+  "rede",
+  "seguranca",
+  "acesso",
+  "geral",
+] as const;
+
+export const knowledgeArticles = sqliteTable("knowledge_articles", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  content: text("content").notNull(),
+  category: text("category", { enum: KB_CATEGORIES }).default("geral").notNull(),
+  tags: text("tags"),
+  status: text("status", { enum: ["draft", "published"] })
+    .default("published")
+    .notNull(),
+  views: integer("views").default(0).notNull(),
+  authorId: integer("authorId"),
+  authorName: text("authorName"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export type KnowledgeArticle = typeof knowledgeArticles.$inferSelect;
+export type InsertKnowledgeArticle = typeof knowledgeArticles.$inferInsert;
