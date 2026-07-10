@@ -159,3 +159,41 @@ export const knowledgeArticles = sqliteTable("knowledge_articles", {
 
 export type KnowledgeArticle = typeof knowledgeArticles.$inferSelect;
 export type InsertKnowledgeArticle = typeof knowledgeArticles.$inferInsert;
+
+export const ASSET_TYPES = [
+  "notebook",
+  "desktop",
+  "servidor",
+  "monitor",
+  "rede",
+  "impressora",
+  "mobile",
+  "licenca",
+  "outro",
+] as const;
+
+export const ASSET_STATUSES = [
+  "ativo",
+  "em_manutencao",
+  "em_estoque",
+  "aposentado",
+] as const;
+
+export const assets = sqliteTable("assets", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  tag: text("tag"),
+  type: text("type", { enum: ASSET_TYPES }).default("outro").notNull(),
+  status: text("status", { enum: ASSET_STATUSES }).default("ativo").notNull(),
+  serialNumber: text("serialNumber"),
+  location: text("location"),
+  assignedTo: integer("assignedTo"),
+  assignedName: text("assignedName"),
+  purchaseDate: text("purchaseDate"),
+  notes: text("notes"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export type Asset = typeof assets.$inferSelect;
+export type InsertAsset = typeof assets.$inferInsert;

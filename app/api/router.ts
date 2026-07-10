@@ -6,6 +6,7 @@ import { chatRouter } from "./chat-router";
 import { reportRouter } from "./report-router";
 import { kbRouter } from "./kb-router";
 import { userRouter } from "./user-router";
+import { assetRouter } from "./asset-router";
 import { createRouter, publicQuery } from "./middleware";
 
 export const appRouter = createRouter({
@@ -18,6 +19,7 @@ export const appRouter = createRouter({
   report: reportRouter,
   kb: kbRouter,
   user: userRouter,
+  asset: assetRouter,
 });
 
 export type AppRouter = typeof appRouter;

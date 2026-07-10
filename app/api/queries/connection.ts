@@ -118,6 +118,22 @@ function ensureSchema(db: Database.Database) {
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS assets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      tag TEXT,
+      type TEXT NOT NULL DEFAULT 'outro',
+      status TEXT NOT NULL DEFAULT 'ativo',
+      serialNumber TEXT,
+      location TEXT,
+      assignedTo INTEGER,
+      assignedName TEXT,
+      purchaseDate TEXT,
+      notes TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }
 

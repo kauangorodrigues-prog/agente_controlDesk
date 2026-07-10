@@ -22,6 +22,9 @@ serviço externo (banco de dados embutido em SQLite e autenticação local).
   administradores, ativos nos últimos 30 dias); administradores podem criar
   usuários, alterar papéis (admin/usuário) e remover contas, com proteção contra
   auto-exclusão/rebaixamento.
+- **Ativos (CMDB)** — inventário de ativos de TI (equipamentos, licenças) com
+  tipo, status, número de série, localização e responsável vinculado à Equipe;
+  busca, filtros por tipo/status, estatísticas e CRUD completo.
 - **Relatórios** — volume de tickets, tempo de resolução, distribuição de
   prioridade e resumo executivo.
 - **Configurações** — perfil, notificações, aparência e segurança.

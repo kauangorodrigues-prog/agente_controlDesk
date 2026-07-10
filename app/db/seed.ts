@@ -11,6 +11,7 @@ import {
   chatMessages,
   activities,
   knowledgeArticles,
+  assets,
 } from "./schema";
 
 /** Default administrator account created on first boot. */
@@ -381,6 +382,82 @@ async function seedKnowledge() {
     );
 }
 
+async function seedAssets() {
+  if ((await count(assets)) > 0) return;
+  const data = [
+    {
+      name: "Notebook Dell Latitude 5440",
+      tag: "NB-0042",
+      type: "notebook" as const,
+      status: "ativo" as const,
+      serialNumber: "DL5440-9X2K",
+      location: "Matriz - 3º andar",
+      assignedName: "Ana Pereira",
+      purchaseDate: "2024-03-12",
+    },
+    {
+      name: "Servidor HPE ProLiant DL380",
+      tag: "SRV-01",
+      type: "servidor" as const,
+      status: "ativo" as const,
+      serialNumber: "HPE-DL380-77A1",
+      location: "Data Center",
+      notes: "Hospeda o ERP e o servidor de arquivos.",
+    },
+    {
+      name: "Switch Cisco Catalyst 2960",
+      tag: "NET-14",
+      type: "rede" as const,
+      status: "ativo" as const,
+      serialNumber: "CIS2960-33B",
+      location: "Rack 3º andar",
+    },
+    {
+      name: "Monitor LG UltraWide 34\"",
+      tag: "MON-215",
+      type: "monitor" as const,
+      status: "em_estoque" as const,
+      serialNumber: "LG34-5521",
+      location: "Almoxarifado TI",
+    },
+    {
+      name: "Impressora HP LaserJet Pro",
+      tag: "IMP-07",
+      type: "impressora" as const,
+      status: "em_manutencao" as const,
+      serialNumber: "HPLJ-8890",
+      location: "Recepção",
+      notes: "Fusor com defeito, aguardando peça.",
+    },
+    {
+      name: "Licença Microsoft 365 E3",
+      tag: "LIC-M365-120",
+      type: "licenca" as const,
+      status: "ativo" as const,
+      notes: "120 assentos.",
+      purchaseDate: "2025-01-05",
+    },
+    {
+      name: "iPhone 14 Corporativo",
+      tag: "MOB-09",
+      type: "mobile" as const,
+      status: "ativo" as const,
+      serialNumber: "IPH14-3391",
+      assignedName: "Carlos Silva",
+    },
+    {
+      name: "Desktop Dell OptiPlex 7010",
+      tag: "DT-118",
+      type: "desktop" as const,
+      status: "aposentado" as const,
+      serialNumber: "OPX7010-2210",
+      location: "Almoxarifado TI",
+      notes: "Fora de garantia, aguardando descarte.",
+    },
+  ];
+  await getDb().insert(assets).values(data);
+}
+
 /**
  * Populate the database with an admin account and demo data. Idempotent — each
  * table is only seeded when empty, so it is safe to run on every boot.
@@ -392,6 +469,7 @@ export async function ensureSeeded() {
   await seedChat();
   await seedActivities();
   await seedKnowledge();
+  await seedAssets();
 }
 
 // Allow running `tsx db/seed.ts` (or the build output) directly.

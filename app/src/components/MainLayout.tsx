@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   BookOpen,
   Users,
+  HardDrive,
   BarChart3,
   Settings,
   LogOut,
@@ -27,6 +28,7 @@ const navItems = [
   { path: "/incidentes", label: "Incidentes", icon: AlertTriangle },
   { path: "/base-conhecimento", label: "Base de Conhecimento", icon: BookOpen },
   { path: "/equipe", label: "Equipe", icon: Users },
+  { path: "/ativos", label: "Ativos", icon: HardDrive },
   { path: "/relatorios", label: "Relatórios", icon: BarChart3 },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];
