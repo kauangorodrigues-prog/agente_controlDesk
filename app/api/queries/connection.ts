@@ -17,7 +17,9 @@ let instance: ReturnType<typeof drizzle<typeof fullSchema>>;
  */
 function resolveDbFile(): string {
   const raw = env.databaseUrl?.trim();
-  let file = "data/controldesk.db";
+  // On serverless platforms (e.g. Vercel) only /tmp is writable, so default the
+  // database there. Note: /tmp is ephemeral, so data resets between cold starts.
+  let file = process.env.VERCEL ? "/tmp/controldesk.db" : "data/controldesk.db";
   if (raw) {
     file = raw.replace(/^sqlite:\/\//, "").replace(/^file:/, "") || file;
   }
