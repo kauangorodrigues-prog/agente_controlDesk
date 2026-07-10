@@ -10,6 +10,7 @@ import Configuracoes from './pages/Configuracoes'
 import BaseConhecimento from './pages/BaseConhecimento'
 import Equipe from './pages/Equipe'
 import Ativos from './pages/Ativos'
+import SLA from './pages/SLA'
 import MainLayout from './components/MainLayout'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/base-conhecimento" element={<BaseConhecimento />} />
         <Route path="/equipe" element={<Equipe />} />
         <Route path="/ativos" element={<Ativos />} />
+        <Route path="/sla" element={<SLA />} />
         <Route path="/relatorios" element={<Relatorios />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
       </Route>

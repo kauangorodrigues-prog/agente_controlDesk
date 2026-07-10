@@ -8,6 +8,7 @@ import {
   BookOpen,
   Users,
   HardDrive,
+  Gauge,
   BarChart3,
   Settings,
   LogOut,
@@ -29,6 +30,7 @@ const navItems = [
   { path: "/base-conhecimento", label: "Base de Conhecimento", icon: BookOpen },
   { path: "/equipe", label: "Equipe", icon: Users },
   { path: "/ativos", label: "Ativos", icon: HardDrive },
+  { path: "/sla", label: "SLA", icon: Gauge },
   { path: "/relatorios", label: "Relatórios", icon: BarChart3 },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];

@@ -134,6 +134,14 @@ function ensureSchema(db: Database.Database) {
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS sla_policies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      priority TEXT NOT NULL UNIQUE,
+      responseHours INTEGER NOT NULL,
+      resolutionHours INTEGER NOT NULL,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }
 

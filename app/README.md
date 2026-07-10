@@ -25,6 +25,9 @@ serviço externo (banco de dados embutido em SQLite e autenticação local).
 - **Ativos (CMDB)** — inventário de ativos de TI (equipamentos, licenças) com
   tipo, status, número de série, localização e responsável vinculado à Equipe;
   busca, filtros por tipo/status, estatísticas e CRUD completo.
+- **SLA** — metas de tempo de resposta e resolução por prioridade; cálculo
+  automático do prazo de cada ticket ativo com status (no prazo / em risco /
+  violado), taxa de conformidade e edição das políticas (administradores).
 - **Relatórios** — volume de tickets, tempo de resolução, distribuição de
   prioridade e resumo executivo.
 - **Configurações** — perfil, notificações, aparência e segurança.

@@ -197,3 +197,16 @@ export const assets = sqliteTable("assets", {
 
 export type Asset = typeof assets.$inferSelect;
 export type InsertAsset = typeof assets.$inferInsert;
+
+export const SLA_PRIORITIES = ["low", "medium", "high", "critical"] as const;
+
+export const slaPolicies = sqliteTable("sla_policies", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  priority: text("priority", { enum: SLA_PRIORITIES }).notNull().unique(),
+  responseHours: integer("responseHours").notNull(),
+  resolutionHours: integer("resolutionHours").notNull(),
+  updatedAt: updatedAt(),
+});
+
+export type SlaPolicy = typeof slaPolicies.$inferSelect;
+export type InsertSlaPolicy = typeof slaPolicies.$inferInsert;

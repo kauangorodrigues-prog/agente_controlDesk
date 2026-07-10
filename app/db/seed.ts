@@ -12,6 +12,7 @@ import {
   activities,
   knowledgeArticles,
   assets,
+  slaPolicies,
 } from "./schema";
 
 /** Default administrator account created on first boot. */
@@ -458,6 +459,18 @@ async function seedAssets() {
   await getDb().insert(assets).values(data);
 }
 
+async function seedSlaPolicies() {
+  if ((await count(slaPolicies)) > 0) return;
+  await getDb()
+    .insert(slaPolicies)
+    .values([
+      { priority: "critical", responseHours: 1, resolutionHours: 4 },
+      { priority: "high", responseHours: 4, resolutionHours: 8 },
+      { priority: "medium", responseHours: 8, resolutionHours: 24 },
+      { priority: "low", responseHours: 24, resolutionHours: 72 },
+    ]);
+}
+
 /**
  * Populate the database with an admin account and demo data. Idempotent — each
  * table is only seeded when empty, so it is safe to run on every boot.
@@ -470,6 +483,7 @@ export async function ensureSeeded() {
   await seedActivities();
   await seedKnowledge();
   await seedAssets();
+  await seedSlaPolicies();
 }
 
 // Allow running `tsx db/seed.ts` (or the build output) directly.
