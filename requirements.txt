@@ -25,6 +25,12 @@ bcrypt>=4.0,<5.0                 # passlib 1.7.x quebra com bcrypt 5.x (erro "72
 prometheus-client>=0.20
 psutil>=5.9                      # métricas de CPU/RAM em /health (degrada se ausente)
 
+# ── Filas & Cache (Fase 3) ──────────────────────────────────
+# Sem REDIS_URL/CELERY_BROKER_URL a app usa cache em memória e fila
+# in-process; estas libs habilitam Redis (cache/broker) e Celery (worker).
+redis>=5.0
+celery>=5.3
+
 # ── Dashboard (opcional — instale se for usar o Streamlit) ──
 streamlit>=1.33
 plotly>=5.20

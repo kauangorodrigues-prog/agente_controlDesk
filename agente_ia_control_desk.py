@@ -111,6 +111,15 @@ class Config:
         self.ETL_UPSERT        = os.getenv("ETL_UPSERT", "true").lower() == "true"
         self.ETL_RETENCAO_DIAS = int(os.getenv("ETL_RETENCAO_DIAS", "0"))
 
+        # ── Cache & Filas (Fase 3) ──────────────────────────
+        # Sem REDIS_URL/CELERY_BROKER_URL a app usa fallback em memória /
+        # fila in-process — funciona sem infra externa.
+        self.REDIS_URL             = os.getenv("REDIS_URL", "")
+        self.CACHE_TTL_SEG         = int(os.getenv("CACHE_TTL_SEG", "30"))
+        self.CELERY_BROKER_URL     = os.getenv("CELERY_BROKER_URL", "")
+        self.CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "")
+        self.QUEUE_WORKERS         = int(os.getenv("QUEUE_WORKERS", "2"))
+
         # ── CORS ────────────────────────────────────────────
         # Lista separada por vírgula; "*" libera todas as origens
         # (aceitável só em desenvolvimento).
@@ -609,6 +618,106 @@ class DeadLetterQueue:
             return r[0]["n"] if r else 0
         except Exception:
             return None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 3D. CACHE (Redis com fallback em memória)
+# ══════════════════════════════════════════════════════════════════════
+# Evita consultas repetidas (KPIs, configs, feriados, forecast). Usa Redis
+# se REDIS_URL estiver definido e a lib disponível; caso contrário, cai para
+# um cache TTL em processo — a app funciona igual, sem infra externa.
+
+class MemoryCache:
+    """Cache TTL em memória, thread-safe. Backend padrão (sem dependências)."""
+
+    def __init__(self):
+        self._dados: dict = {}
+        self._lock = threading.Lock()
+
+    def get(self, chave: str):
+        with self._lock:
+            item = self._dados.get(chave)
+            if not item:
+                return None
+            valor, expira = item
+            if expira and time.time() > expira:
+                self._dados.pop(chave, None)
+                return None
+            return valor
+
+    def set(self, chave: str, valor, ttl: int = None):
+        expira = (time.time() + ttl) if ttl else None
+        with self._lock:
+            self._dados[chave] = (valor, expira)
+
+    def delete(self, chave: str):
+        with self._lock:
+            self._dados.pop(chave, None)
+
+    def clear(self):
+        with self._lock:
+            self._dados.clear()
+
+
+class RedisCache:
+    """Backend Redis (serialização JSON). Usado quando REDIS_URL está definido."""
+
+    def __init__(self, client):
+        self._r = client
+
+    def get(self, chave: str):
+        try:
+            bruto = self._r.get(chave)
+            return json.loads(bruto) if bruto is not None else None
+        except Exception as e:
+            log.debug(f"[Cache] get falhou ({chave}): {e}")
+            return None
+
+    def set(self, chave: str, valor, ttl: int = None):
+        try:
+            dado = json.dumps(valor, default=str)
+            self._r.set(chave, dado, ex=ttl or None)
+        except Exception as e:
+            log.debug(f"[Cache] set falhou ({chave}): {e}")
+
+    def delete(self, chave: str):
+        try:
+            self._r.delete(chave)
+        except Exception:
+            pass
+
+    def clear(self):
+        try:
+            self._r.flushdb()
+        except Exception:
+            pass
+
+
+def _build_cache():
+    if CFG.REDIS_URL:
+        try:
+            import redis
+            client = redis.Redis.from_url(CFG.REDIS_URL, socket_timeout=2, decode_responses=True)
+            client.ping()
+            log.info("[Cache] Backend: Redis")
+            return RedisCache(client)
+        except Exception as e:
+            log.warning(f"[Cache] Redis indisponível ({e}); usando cache em memória.")
+    return MemoryCache()
+
+
+CACHE = _build_cache()
+
+
+def cache_get_or_set(chave: str, ttl: int, produtor):
+    """Retorna o valor cacheado ou executa `produtor()`, cacheia e retorna."""
+    valor = CACHE.get(chave)
+    if valor is not None:
+        return valor
+    valor = produtor()
+    if valor is not None:
+        CACHE.set(chave, valor, ttl)
+    return valor
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1255,15 +1364,30 @@ class HolidayService:
         return HolidayService.dentro_do_horario(campanha_id, agora)
 
     @staticmethod
+    def _cache_ver() -> int:
+        v = CACHE.get("feriados:ver")
+        return v if v is not None else 0
+
+    @staticmethod
+    def _invalidar_cache() -> None:
+        # Bump de versão: invalida todas as chaves de listagem sem varrer o cache.
+        CACHE.set("feriados:ver", HolidayService._cache_ver() + 1, ttl=None)
+
+    @staticmethod
     def listar_feriados(ano: int = None) -> list:
         ano = ano or date.today().year
-        try:
-            return executar_query(
-                "SELECT * FROM feriados WHERE EXTRACT(YEAR FROM data) = :ano ORDER BY data",
-                {"ano": ano},
-            )
-        except Exception:
-            return []
+        ver = HolidayService._cache_ver()
+
+        def _carregar():
+            try:
+                return executar_query(
+                    "SELECT * FROM feriados WHERE EXTRACT(YEAR FROM data) = :ano ORDER BY data",
+                    {"ano": ano},
+                )
+            except Exception:
+                return []
+
+        return cache_get_or_set(f"feriados:{ano}:{ver}", 300, _carregar)
 
     @staticmethod
     def adicionar_feriado(
@@ -1296,6 +1420,7 @@ class HolidayService:
                 },
             )
             log.info(f"[Feriado] Adicionado: {data_f} — {nome}")
+            HolidayService._invalidar_cache()
             return True
         except Exception as e:
             log.error(f"[Feriado] Erro: {e}")
@@ -1305,6 +1430,8 @@ class HolidayService:
     def remover_feriado(feriado_id: int) -> bool:
         try:
             n = executar_comando("DELETE FROM feriados WHERE id = :id", {"id": feriado_id})
+            if n > 0:
+                HolidayService._invalidar_cache()
             return n > 0
         except Exception:
             return False
@@ -1344,11 +1471,14 @@ class PacingService:
 
     @staticmethod
     def _configs() -> dict:
-        try:
-            rows = executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE")
-            return {r["campanha_id"]: r for r in rows}
-        except Exception:
-            return {}
+        def _carregar():
+            try:
+                rows = executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE")
+                return {r["campanha_id"]: r for r in rows}
+            except Exception:
+                return {}
+        # Cache curto: evita reler as configs a cada ciclo de pacing.
+        return cache_get_or_set("campaign_config:ativas", CFG.CACHE_TTL_SEG, _carregar)
 
     @staticmethod
     def _campanhas_ativas() -> list:
@@ -2069,6 +2199,117 @@ def parar_scheduler():
 
 
 # ══════════════════════════════════════════════════════════════════════
+# 15B. FILA DE JOBS (prioridades; Celery opcional, fila in-process padrão)
+# ══════════════════════════════════════════════════════════════════════
+# Cada job pode rodar: imediatamente (sync), via fila (com prioridade),
+# manualmente (API) ou por scheduler (já existente). Sem CELERY_BROKER_URL,
+# usa uma fila de prioridade em processo — funciona sem broker externo.
+
+import itertools
+import queue as _queue_mod
+
+
+class Prioridade:
+    CRITICAL = 0
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3
+    MAPA = {"CRITICAL": 0, "HIGH": 1, "NORMAL": 2, "LOW": 3}
+
+
+# Registro de jobs executáveis — reutiliza os serviços existentes.
+JOBS_REGISTRO = {
+    "etl":            ETLService.run_etl,
+    "ocupacao":       OccupancyService.calculate_occupancy,
+    "pacing":         PacingService.auto_adjust_pacing,
+    "mailing":        lambda: MailingScoreService.calculate_score(),
+    "auditoria":      AuditService.run_audit,
+    "relatorio":      ReportService.pipeline_intraday,
+    "forecast":       lambda: ForecastService.generate_forecast(),
+    "feriados_sync":  lambda: HolidayService.sincronizar_feriados_nacionais(),
+    "retencao":       ETLService.compactar_snapshots,
+}
+
+
+class JobQueue:
+    """Fila de jobs com prioridade. Backend in-process por padrão; roteia para
+    Celery se CELERY_BROKER_URL estiver configurado e o celery_app disponível."""
+
+    _fila: "_queue_mod.PriorityQueue" = _queue_mod.PriorityQueue()
+    _seq = itertools.count()
+    _workers_iniciados = False
+    _lock = threading.Lock()
+
+    @staticmethod
+    def jobs_disponiveis() -> list:
+        return sorted(JOBS_REGISTRO)
+
+    @staticmethod
+    def _celery():
+        if not CFG.CELERY_BROKER_URL:
+            return None
+        try:
+            import celery_app
+            return celery_app
+        except Exception as e:
+            log.debug(f"[Fila] Celery indisponível ({e}); usando fila in-process.")
+            return None
+
+    @classmethod
+    def executar_sync(cls, nome: str) -> dict:
+        if nome not in JOBS_REGISTRO:
+            raise KeyError(nome)
+        _safe_run(JOBS_REGISTRO[nome], nome)  # reusa timeout/retry/DLQ/métricas
+        return {"job": nome, "modo": "sync", "status": "executado"}
+
+    @classmethod
+    def enfileirar(cls, nome: str, prioridade: str = "NORMAL") -> dict:
+        if nome not in JOBS_REGISTRO:
+            raise KeyError(nome)
+        prio = Prioridade.MAPA.get(str(prioridade).upper(), Prioridade.NORMAL)
+
+        cel = cls._celery()
+        if cel is not None:
+            cel.executar_job.apply_async(args=[nome], priority=prio)
+            return {"job": nome, "modo": "celery", "prioridade": prioridade.upper()}
+
+        cls._garantir_workers()
+        cls._fila.put((prio, next(cls._seq), nome))
+        return {"job": nome, "modo": "fila", "prioridade": prioridade.upper(),
+                "tamanho_fila": cls._fila.qsize()}
+
+    @classmethod
+    def _garantir_workers(cls):
+        with cls._lock:
+            if cls._workers_iniciados:
+                return
+            for i in range(max(CFG.QUEUE_WORKERS, 1)):
+                threading.Thread(target=cls._worker, daemon=True, name=f"jobq-{i}").start()
+            cls._workers_iniciados = True
+            log.info(f"[Fila] {max(CFG.QUEUE_WORKERS, 1)} worker(s) in-process iniciados.")
+
+    @classmethod
+    def _worker(cls):
+        while True:
+            prio, seq, nome = cls._fila.get()
+            try:
+                fn = JOBS_REGISTRO.get(nome)
+                if fn:
+                    _safe_run(fn, nome)
+            finally:
+                cls._fila.task_done()
+
+    @classmethod
+    def status(cls) -> dict:
+        return {
+            "backend": "celery" if (CFG.CELERY_BROKER_URL and cls._celery()) else "in-process",
+            "tamanho_fila": cls._fila.qsize(),
+            "workers": (max(CFG.QUEUE_WORKERS, 1) if cls._workers_iniciados else 0),
+            "jobs_disponiveis": cls.jobs_disponiveis(),
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════
 # 16. API FASTAPI
 # ══════════════════════════════════════════════════════════════════════
 
@@ -2369,6 +2610,27 @@ try:
         if rel.get("erro"):
             raise HTTPException(status_code=404, detail=rel["erro"])
         return rel
+
+    # ── Jobs / Filas ──
+    @app.get("/jobs", tags=["Jobs"], dependencies=[Depends(_verificar_token)])
+    def jobs_listar():
+        return {"disponiveis": JobQueue.jobs_disponiveis(), "fila": JobQueue.status()}
+
+    @app.post("/jobs/{nome}/executar", tags=["Jobs"], dependencies=[Depends(_verificar_token)])
+    def jobs_executar(nome: str):
+        try:
+            return JobQueue.executar_sync(nome)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Job '{nome}' não encontrado")
+
+    @app.post("/jobs/{nome}/enfileirar", tags=["Jobs"], dependencies=[Depends(_verificar_token)])
+    def jobs_enfileirar(nome: str, prioridade: str = Query("NORMAL")):
+        if prioridade.upper() not in Prioridade.MAPA:
+            raise HTTPException(status_code=400, detail="prioridade: CRITICAL|HIGH|NORMAL|LOW")
+        try:
+            return JobQueue.enfileirar(nome, prioridade)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Job '{nome}' não encontrado")
 
     FASTAPI_DISPONIVEL = True
 

@@ -159,6 +159,7 @@ cálculo de pacing) e não dependem de banco de dados.
 ```
 .
 ├── agente_ia_control_desk.py   # aplicação (API + scheduler + dashboard + serviços)
+├── celery_app.py               # worker Celery opcional (Fase 3)
 ├── .github/workflows/ci.yml    # CI (pytest a cada push/PR)
 ├── db/
 │   ├── schema.sql              # DDL idempotente (todas as tabelas)
@@ -171,7 +172,9 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── test_uplift.py          # estatística e atribuição de uplift
 │   ├── test_observability.py   # logging JSON, registro de jobs, health
 │   ├── test_resilience.py      # retry, circuit breaker, timeout, DLQ
-│   └── test_etl.py             # UPSERT idempotente, dedup, watermark
+│   ├── test_etl.py             # UPSERT idempotente, dedup, watermark
+│   ├── test_cache.py           # cache TTL, get_or_set, invalidação
+│   └── test_queue.py           # fila de prioridade, execução sync/enfileirada
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -224,6 +227,17 @@ Configurável via `.env` (`JOB_TIMEOUT_SEG`, `JOB_MAX_RETRIES`, `RETRY_BASE_SEG`
 - **Segurança** — identificadores SQL (tabela/coluna) são validados por regex contra injeção antes de compor o UPSERT.
 
 Configurável via `.env` (`ETL_UPSERT`, `ETL_RETENCAO_DIAS`).
+
+## Filas & Cache (Fase 3)
+
+**Degradação graciosa:** sem `REDIS_URL`/`CELERY_BROKER_URL`, a app usa **cache em memória** e **fila de prioridade in-process** — funciona sem infra externa. Definir as variáveis habilita Redis e Celery sem mudar código.
+
+- **Cache (Melhoria 13)** — `CACHE` com backend Redis ou memória (fallback). Aplicado a leituras repetidas: `campaign_config` (TTL curto no ciclo de pacing) e listagem de `feriados` (com **invalidação por versão** ao criar/remover). Helper `cache_get_or_set`.
+- **Filas (Melhoria 3)** — cada job pode rodar **imediatamente**, **via fila** (com prioridade `CRITICAL|HIGH|NORMAL|LOW`), **manualmente** (API) ou **por scheduler**. Backend in-process por padrão; roteia para **Celery** (Redis/RabbitMQ) quando `CELERY_BROKER_URL` está definido (`celery_app.py` + serviço `worker` no compose). Os jobs reutilizam o wrapper resiliente `_safe_run` (timeout/retry/DLQ/métricas).
+
+Endpoints: `GET /jobs` (lista + estado da fila), `POST /jobs/{nome}/executar` (sync), `POST /jobs/{nome}/enfileirar?prioridade=HIGH`.
+
+Configurável via `.env` (`REDIS_URL`, `CACHE_TTL_SEG`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `QUEUE_WORKERS`). O `docker compose up` sobe também **Redis** e um **worker Celery**.
 
 ## Integração contínua
 
