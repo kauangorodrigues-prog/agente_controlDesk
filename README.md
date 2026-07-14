@@ -160,7 +160,10 @@ cálculo de pacing) e não dependem de banco de dados.
 
 ```
 .
-├── agente_ia_control_desk.py   # aplicação (API + scheduler + dashboard + serviços)
+├── agente_ia_control_desk.py   # fachada: entrypoints + reexporta a API pública
+├── app/                        # pacote modular (Fase 6, extração incremental)
+│   ├── core/resilience.py      #   timeout, retry, circuit breaker
+│   └── utils/validators.py     #   CPF/telefone/tempo (puro)
 ├── celery_app.py               # worker Celery opcional (Fase 3)
 ├── .github/workflows/ci.yml    # CI (pytest a cada push/PR)
 ├── db/
@@ -178,7 +181,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── test_cache.py           # cache TTL, get_or_set, invalidação
 │   ├── test_queue.py           # fila de prioridade, execução sync/enfileirada
 │   ├── test_db.py              # read replica, paginação, streaming, ETL paralelo
-│   └── test_ia.py              # propensão, decisão, ensemble de forecast
+│   ├── test_ia.py              # propensão, decisão, ensemble de forecast
+│   └── test_app_package.py     # layout modular (Fase 6) + fachada
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -266,6 +270,12 @@ Degradação graciosa: sem `scikit-learn` (ou sem modelo ativo), o scoring usa o
 - **Motor de decisão (M12)** — `GET /ia/decisoes` recomenda, por KPIs, **acelerar/desacelerar** pacing, **repor mailing** e priorizações (humano no loop — recomenda, não aplica).
 
 Treino re-executado semanalmente (domingo 04:10) e disponível como job (`ia_treino`) na fila. Configurável via `.env` (`IA_MODELO_DIR`, `IA_MIN_AMOSTRAS`).
+
+## Arquitetura modular (Fase 6)
+
+Refatoração **incremental e retrocompatível** do módulo único para o pacote `app/` (SOLID, separação de responsabilidades). `agente_ia_control_desk.py` permanece como **fachada** que reexporta a API pública — entrypoints (`python … api`, `uvicorn …:app`), `celery_app.py`, `scripts/` e todos os testes seguem funcionando sem alteração.
+
+Já extraídos (camadas de menor acoplamento, com dependências apenas "para baixo"): `app/core/resilience.py` (timeout/retry/circuit breaker) e `app/utils/validators.py` (CPF/telefone/tempo, puro). As camadas seguintes (config, cache, banco, repositórios, serviços, IA, API) são movidas nos próximos passos, sempre mantendo a suíte verde e a fachada estável.
 
 ## Integração contínua
 

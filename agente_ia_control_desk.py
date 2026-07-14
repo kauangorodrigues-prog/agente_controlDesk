@@ -30,6 +30,16 @@ import numpy as np
 import pandas as pd
 import requests
 
+# ── Camadas modulares extraídas (Fase 6) — reexportadas por compatibilidade ──
+from app.core.resilience import (  # noqa: E402,F401
+    CircuitBreaker, CircuitBreakerOpen, executar_com_timeout, retry_call,
+)
+from app.utils.validators import (  # noqa: E402,F401
+    DDDS_VALIDOS, DDD_SCORE_MAP, validar_cpf, validar_telefone, str_para_time,
+)
+
+_str_para_time = str_para_time  # alias de compatibilidade (nome antigo)
+
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. CONFIGURAÇÃO
@@ -545,108 +555,11 @@ def health_geral() -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# 3C. RESILIÊNCIA (timeout, retry, circuit breaker, DLQ)
+# 3C. RESILIÊNCIA (timeout, retry, circuit breaker → app/core/resilience.py) + DLQ
 # ══════════════════════════════════════════════════════════════════════
-
-class CircuitBreakerOpen(Exception):
-    """Sinaliza que o circuit breaker está aberto e a chamada foi barrada."""
-
-
-# Executor dedicado para impor timeout em funções síncronas.
-_JOB_TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=8, thread_name_prefix="jobtimeout"
-)
-
-
-def executar_com_timeout(fn, timeout_s: float, nome: str = ""):
-    """Executa fn com timeout. Propaga o contexto (correlation id) para a thread.
-
-    Limitação honesta: Python não permite matar uma thread à força — em caso de
-    timeout, paramos de esperar e sinalizamos, mas a thread pode seguir até o fim.
-    """
-    if not timeout_s or timeout_s <= 0:
-        return fn()
-    ctx = contextvars.copy_context()
-    fut = _JOB_TIMEOUT_EXECUTOR.submit(ctx.run, fn)
-    try:
-        return fut.result(timeout=timeout_s)
-    except concurrent.futures.TimeoutError:
-        raise TimeoutError(f"'{nome}' excedeu o timeout de {timeout_s}s")
-
-
-def retry_call(fn, max_retries: int = 3, base_delay: float = 1.0,
-               max_delay: float = 30.0, exceptions: tuple = (Exception,),
-               nome: str = "", on_retry=None, retriavel=None):
-    """Executa fn com retry de backoff exponencial. Reutilizável por jobs e I/O.
-
-    `retriavel(e)` opcional: se fornecido e retornar False, a exceção é
-    propagada sem retry (ex.: não reexecutar um statement_timeout)."""
-    tentativa = 0
-    while True:
-        try:
-            return fn()
-        except exceptions as e:
-            if retriavel is not None and not retriavel(e):
-                raise
-            tentativa += 1
-            if tentativa > max_retries:
-                raise
-            delay = min(base_delay * (2 ** (tentativa - 1)), max_delay)
-            if on_retry:
-                try:
-                    on_retry(tentativa, e)
-                except Exception:
-                    pass
-            log.warning(f"[Retry] '{nome}' tentativa {tentativa}/{max_retries} falhou: {e}. "
-                        f"Aguardando {delay:.1f}s")
-            time.sleep(delay)
-
-
-class CircuitBreaker:
-    """Circuit breaker CLOSED → OPEN → HALF_OPEN (thread-safe)."""
-
-    def __init__(self, fail_threshold: int = 5, reset_timeout: int = 60, nome: str = "cb"):
-        self.fail_threshold = fail_threshold
-        self.reset_timeout = reset_timeout
-        self.nome = nome
-        self.estado = "CLOSED"
-        self.falhas = 0
-        self.aberto_em = None
-        self._lock = threading.Lock()
-
-    def permitir(self) -> bool:
-        with self._lock:
-            if self.estado == "OPEN":
-                if self.aberto_em and (time.time() - self.aberto_em) >= self.reset_timeout:
-                    self.estado = "HALF_OPEN"
-                    return True
-                return False
-            return True
-
-    def registrar_sucesso(self):
-        with self._lock:
-            self.falhas = 0
-            self.estado = "CLOSED"
-            self.aberto_em = None
-
-    def registrar_falha(self):
-        with self._lock:
-            self.falhas += 1
-            if self.estado == "HALF_OPEN" or self.falhas >= self.fail_threshold:
-                self.estado = "OPEN"
-                self.aberto_em = time.time()
-
-    def chamar(self, fn):
-        if not self.permitir():
-            raise CircuitBreakerOpen(f"Circuit breaker '{self.nome}' aberto")
-        try:
-            resultado = fn()
-        except Exception:
-            self.registrar_falha()
-            raise
-        self.registrar_sucesso()
-        return resultado
-
+# CircuitBreaker/retry_call/executar_com_timeout foram extraídos para
+# app/core/resilience.py (Fase 6) e reimportados no topo. A DLQ permanece aqui
+# por depender de executar_comando/executar_query e do webhook.
 
 class DeadLetterQueue:
     """Fila de mensagens mortas: persiste a falha terminal, alerta e loga.
@@ -1420,12 +1333,7 @@ class OccupancyService:
 # 9. HOLIDAY SERVICE
 # ══════════════════════════════════════════════════════════════════════
 
-def _str_para_time(s: str) -> dtime:
-    try:
-        p = str(s).split(":")
-        return dtime(int(p[0]), int(p[1]))
-    except Exception:
-        return dtime(8, 0)
+# _str_para_time foi extraído para app/utils/validators.py (aliasado no topo).
 
 
 class HolidayService:
@@ -1785,40 +1693,15 @@ class PacingService:
 # 11. MAILING SCORE SERVICE
 # ══════════════════════════════════════════════════════════════════════
 
-DDDS_VALIDOS = {
-    str(d) for d in
-    list(range(11, 20)) + list(range(21, 30)) +
-    list(range(31, 40)) + list(range(41, 50)) +
-    list(range(51, 70)) + list(range(71, 99))
-}
-
-DDD_SCORE_MAP = {
-    "11": 10, "21": 9, "31": 8, "41": 8, "51": 7,
-    "71": 7,  "61": 6, "85": 6, "81": 6,
-}
+# DDDS_VALIDOS/DDD_SCORE_MAP extraídos para app/utils/validators.py (importados no topo).
 
 
 class MailingScoreService:
 
-    @staticmethod
-    def validar_cpf(cpf: str) -> bool:
-        cpf = re.sub(r"\D", "", str(cpf or ""))
-        if len(cpf) != 11 or len(set(cpf)) == 1:
-            return False
-        for i in range(2):
-            soma = sum(int(cpf[j]) * (10 + i - j) for j in range(9 + i))
-            if (soma * 10 % 11) % 10 != int(cpf[9 + i]):
-                return False
-        return True
-
-    @staticmethod
-    def validar_telefone(tel: str) -> Optional[str]:
-        digits = re.sub(r"\D", "", str(tel or ""))
-        if len(digits) not in (10, 11):
-            return None
-        if digits[:2] not in DDDS_VALIDOS:
-            return None
-        return digits
+    # validar_cpf/validar_telefone vivem em app/utils/validators.py; aqui ficam
+    # como staticmethods delegando (preserva a API MailingScoreService.validar_*).
+    validar_cpf = staticmethod(validar_cpf)
+    validar_telefone = staticmethod(validar_telefone)
 
     @staticmethod
     def calcular_score(row: pd.Series) -> float:
