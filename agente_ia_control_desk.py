@@ -128,6 +128,10 @@ class Config:
         self.DATABASE_REPLICA_URL    = os.getenv("DATABASE_REPLICA_URL", "")  # vazio = usa a primária
         self.ETL_PARALELO            = os.getenv("ETL_PARALELO", "true").lower() == "true"
 
+        # ── IA (Fase 5) ─────────────────────────────────────
+        self.IA_MODELO_DIR   = os.getenv("IA_MODELO_DIR", "models")
+        self.IA_MIN_AMOSTRAS = int(os.getenv("IA_MIN_AMOSTRAS", "200"))
+
         # ── CORS ────────────────────────────────────────────
         # Lista separada por vírgula; "*" libera todas as origens
         # (aceitável só em desenvolvimento).
@@ -504,8 +508,11 @@ def health_jobs() -> dict:
 
 
 def health_ia() -> dict:
-    """Estado da camada preditiva (forecast + scorer)."""
-    d = {"scorer": "heuristico"}  # substituído por modelo GBM na Fase 5
+    """Estado da camada preditiva (forecast + scorer + modelo de propensão)."""
+    try:
+        d = dict(PropensityModel.status())  # scorer, versao_ativa, sklearn
+    except Exception:
+        d = {"scorer": "heuristico"}
     try:
         rows = executar_query("SELECT MAX(gerado_em) AS ultimo FROM forecast_calls")
         ultimo = rows[0]["ultimo"] if rows else None
@@ -1867,7 +1874,18 @@ class MailingScoreService:
             )
 
         df["score_discagem"] = df.apply(MailingScoreService.calcular_score, axis=1)
-        df = df.sort_values("score_discagem", ascending=False).reset_index(drop=True)
+
+        # Propensão via modelo (se houver um ativo); senão, mantém o heurístico.
+        probs = PropensityModel.prever(df)
+        if probs is not None:
+            df["score_propensao"] = (probs * 100).round(2)
+            df["score_final"] = df["score_propensao"]
+            df["scoring_metodo"] = "ml"
+        else:
+            df["score_final"] = df["score_discagem"]
+            df["scoring_metodo"] = "heuristico"
+
+        df = df.sort_values("score_final", ascending=False).reset_index(drop=True)
 
         try:
             df["scored_at"] = datetime.utcnow()
@@ -1919,34 +1937,310 @@ class ForecastService:
         return pd.DataFrame(rows)
 
     @staticmethod
-    def generate_forecast(periodos: int = 24, tma_min: float = 5.0) -> pd.DataFrame:
-        log.info("[Forecast] Gerando previsão...")
-        df = ForecastService._serie()
-        if df.empty or len(df) < 48:
-            log.warning("[Forecast] Histórico insuficiente.")
-            return pd.DataFrame()
+    def _ewma(df: pd.DataFrame, periodos: int) -> pd.DataFrame:
+        """Nível por média móvel exponencial (≈1 semana) × perfil sazonal (dow, hora)."""
+        df = df.copy()
+        media_global = df["y"].mean() or 1.0
+        nivel = df["y"].ewm(span=24 * 7, adjust=False).mean().iloc[-1]
+        perfil = df.assign(dow=df["ds"].dt.dayofweek, hora=df["ds"].dt.hour) \
+                   .groupby(["dow", "hora"])["y"].mean() / media_global
+        ultima = df["ds"].max()
+        rows = []
+        for i in range(1, periodos + 1):
+            prox = ultima + timedelta(hours=i)
+            fator = float(perfil.get((prox.dayofweek, prox.hour), 1.0))
+            rows.append({"ds": prox, "yhat": max(nivel * fator, 0.0)})
+        return pd.DataFrame(rows)
 
+    @staticmethod
+    def _ensemble(df: pd.DataFrame, periodos: int) -> pd.DataFrame:
+        """Ensemble: média das previsões disponíveis (sazonal + EWMA + Prophet)."""
+        metodos = {
+            "sazonal": ForecastService._fallback(df, periodos)[["ds", "yhat"]],
+            "ewma":    ForecastService._ewma(df, periodos)[["ds", "yhat"]],
+        }
         try:
             from prophet import Prophet
             m = Prophet(weekly_seasonality=True, daily_seasonality=True, yearly_seasonality=False)
             m.fit(df[["ds", "y"]])
             futuro = m.make_future_dataframe(periods=periodos, freq="H")
-            fc = m.predict(futuro)
-            fc = fc[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail(periodos)
-            log.info("[Forecast] Método: Prophet")
-        except (ImportError, Exception) as e:
-            log.warning(f"[Forecast] Prophet indisponível ({e}) — usando fallback.")
-            fc = ForecastService._fallback(df, periodos)
+            metodos["prophet"] = m.predict(futuro)[["ds", "yhat"]].tail(periodos)
+        except Exception as e:
+            log.info(f"[Forecast] Prophet fora do ensemble ({e}).")
 
+        base = metodos["sazonal"][["ds"]].copy()
+        cols = []
+        for nome, fcm in metodos.items():
+            base = base.merge(fcm.rename(columns={"yhat": f"yhat_{nome}"}), on="ds", how="left")
+            cols.append(f"yhat_{nome}")
+        base["yhat"] = base[cols].mean(axis=1).round().clip(lower=0)
+        base["yhat_lower"] = (base["yhat"] * 0.80).round().clip(lower=0)
+        base["yhat_upper"] = (base["yhat"] * 1.20).round()
+        base["metodo"] = "ensemble(" + "+".join(metodos) + ")"
+        return base[["ds", "yhat", "yhat_lower", "yhat_upper", "metodo"]]
+
+    @staticmethod
+    def generate_forecast(periodos: int = 24, tma_min: float = 5.0) -> pd.DataFrame:
+        log.info("[Forecast] Gerando previsão (ensemble)...")
+        df = ForecastService._serie()
+        if df.empty or len(df) < 48:
+            log.warning("[Forecast] Histórico insuficiente.")
+            return pd.DataFrame()
+
+        fc = ForecastService._ensemble(df, periodos)
+        # Feature de feriado (dia útil × feriado afeta o volume).
+        fc["feriado"] = fc["ds"].apply(lambda d: HolidayService.e_feriado(pd.Timestamp(d).date())[0])
         fc["agentes_necessarios"] = (fc["yhat"] * (tma_min / 60)).apply(np.ceil).clip(lower=0).astype(int)
         fc["gerado_em"] = datetime.utcnow()
 
+        # Persiste só as colunas base (schema estável); o retorno traz metodo/feriado.
+        persist = ["ds", "yhat", "yhat_lower", "yhat_upper", "agentes_necessarios", "gerado_em"]
         try:
-            fc.to_sql("forecast_calls", engine, if_exists="append", index=False)
+            fc[persist].to_sql("forecast_calls", engine, if_exists="append", index=False)
         except Exception as e:
             log.error(f"[Forecast] Erro ao salvar: {e}")
 
         return fc
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 12B. IA — PROPENSÃO (GBM), VERSIONAMENTO/ROLLBACK e DECISÃO
+# ══════════════════════════════════════════════════════════════════════
+
+def _sklearn_disponivel() -> bool:
+    try:
+        import sklearn  # noqa: F401
+        import joblib    # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+class PropensityModel:
+    """Modelo de propensão a pagar (gradient boosting), com pipeline de treino,
+    inferência, versionamento e rollback. Degrada para o score heurístico
+    quando o scikit-learn não está disponível ou não há modelo ativo."""
+
+    FEATURES = ["previous_cpc", "days_delay", "faixa_atraso_dias",
+                "phone_score", "ddd_score", "promessa_quebrada"]
+
+    _cache_modelo = None  # (versao, modelo) em memória
+
+    # ── Features ──────────────────────────────────────────
+    @staticmethod
+    def _features(df: pd.DataFrame) -> pd.DataFrame:
+        def col(nome, default):
+            # Sempre devolve uma Series alinhada (mesmo se a coluna faltar).
+            return df[nome] if nome in df.columns else pd.Series(default, index=df.index)
+
+        X = pd.DataFrame(index=df.index)
+        X["previous_cpc"]      = pd.to_numeric(col("previous_cpc", 0), errors="coerce").fillna(0.0)
+        X["days_delay"]        = pd.to_numeric(col("days_delay", 30), errors="coerce").fillna(30.0)
+        X["faixa_atraso_dias"] = pd.to_numeric(col("faixa_atraso_dias", 0), errors="coerce").fillna(0.0)
+        X["phone_score"]       = pd.to_numeric(col("phone_score", 0), errors="coerce").fillna(0.0)
+        ddd = col("ddd", "").astype(str).str[:2]
+        X["ddd_score"]         = ddd.map(lambda d: DDD_SCORE_MAP.get(d, 5)).astype(float)
+        X["promessa_quebrada"] = (
+            col("promessa_quebrada", 0).astype(str).isin(["1", "True", "true", "t", "yes"]).astype(int)
+        )
+        return X[PropensityModel.FEATURES]
+
+    # ── Persistência de versões ───────────────────────────
+    @staticmethod
+    def _proxima_versao() -> int:
+        try:
+            r = executar_query("SELECT COALESCE(MAX(versao), 0) AS v FROM model_registry WHERE tipo='propensao'")
+            return int(r[0]["v"]) + 1 if r else 1
+        except Exception:
+            return 1
+
+    @staticmethod
+    def _registrar_versao(versao, algoritmo, metricas, caminho):
+        # Desativa as demais e ativa a nova (a mais recente vira a ativa).
+        executar_comando("UPDATE model_registry SET ativo=FALSE WHERE tipo='propensao'")
+        executar_comando(
+            """
+            INSERT INTO model_registry (tipo, versao, algoritmo, metricas, caminho, ativo)
+            VALUES ('propensao', :v, :alg, :met, :cam, TRUE)
+            """,
+            {"v": versao, "alg": algoritmo, "met": json.dumps(metricas, default=str), "cam": caminho},
+        )
+
+    @staticmethod
+    def _dados_treino():
+        """Rótulo = recuperado (tem promessa/acordo). Features do último snapshot do cliente."""
+        try:
+            rows = executar_query(
+                """
+                SELECT c.*, CASE WHEN p.cpf IS NOT NULL THEN 1 ELSE 0 END AS y
+                FROM (
+                    SELECT DISTINCT ON (cpf) * FROM customers
+                    WHERE cpf IS NOT NULL ORDER BY cpf, captured_at DESC
+                ) c
+                LEFT JOIN (SELECT DISTINCT cpf FROM collector_promessas) p ON p.cpf = c.cpf
+                """
+            )
+        except Exception as e:
+            log.error(f"[IA] Falha ao carregar dados de treino: {e}")
+            return None, None
+        if not rows:
+            return None, None
+        df = pd.DataFrame(rows)
+        y = df.pop("y")
+        return df, y
+
+    # ── Treino ────────────────────────────────────────────
+    @staticmethod
+    def treinar(df: pd.DataFrame = None, y=None) -> dict:
+        if not _sklearn_disponivel():
+            log.warning("[IA] scikit-learn indisponível — treino ignorado (mantém heurístico).")
+            return {"status": "sklearn_indisponivel"}
+        if df is None:
+            df, y = PropensityModel._dados_treino()
+        if df is None or len(df) < CFG.IA_MIN_AMOSTRAS:
+            return {"status": "amostras_insuficientes", "n": (0 if df is None else len(df))}
+        y = pd.Series(y).astype(int)
+        if y.nunique() < 2:
+            return {"status": "classes_insuficientes", "n": len(df)}
+
+        from sklearn.model_selection import train_test_split
+        from sklearn.ensemble import GradientBoostingClassifier
+        from sklearn.metrics import roc_auc_score
+        import joblib
+
+        X = PropensityModel._features(df)
+        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+        modelo = GradientBoostingClassifier(random_state=42)
+        modelo.fit(Xtr, ytr)
+        try:
+            auc = float(roc_auc_score(yte, modelo.predict_proba(Xte)[:, 1])) if yte.nunique() > 1 else None
+        except Exception:
+            auc = None
+
+        versao = PropensityModel._proxima_versao()
+        os.makedirs(CFG.IA_MODELO_DIR, exist_ok=True)
+        caminho = os.path.join(CFG.IA_MODELO_DIR, f"propensao_v{versao}.joblib")
+        joblib.dump(modelo, caminho)
+        metricas = {"auc": auc, "n_treino": int(len(Xtr)), "n_teste": int(len(Xte)),
+                    "positivos": int(y.sum()), "features": PropensityModel.FEATURES}
+        try:
+            PropensityModel._registrar_versao(versao, "GradientBoostingClassifier", metricas, caminho)
+        except Exception as e:
+            log.error(f"[IA] Falha ao registrar versão: {e}")
+            return {"status": "erro_registro", "erro": str(e)}
+        PropensityModel._cache_modelo = None
+        log.info(f"[IA] Modelo de propensão v{versao} treinado (auc={auc}).")
+        return {"status": "treinado", "versao": versao, **metricas}
+
+    # ── Inferência ────────────────────────────────────────
+    @staticmethod
+    def _modelo_ativo():
+        if PropensityModel._cache_modelo is not None:
+            return PropensityModel._cache_modelo
+        if not _sklearn_disponivel():
+            return None
+        try:
+            rows = executar_query(
+                "SELECT versao, caminho FROM model_registry "
+                "WHERE tipo='propensao' AND ativo=TRUE ORDER BY versao DESC LIMIT 1"
+            )
+            if not rows or not os.path.exists(rows[0]["caminho"]):
+                return None
+            import joblib
+            modelo = joblib.load(rows[0]["caminho"])
+            PropensityModel._cache_modelo = (rows[0]["versao"], modelo)
+            return PropensityModel._cache_modelo
+        except Exception as e:
+            log.warning(f"[IA] Falha ao carregar modelo ativo: {e}")
+            return None
+
+    @staticmethod
+    def prever(df: pd.DataFrame):
+        """Series de probabilidade [0,1] por linha, ou None se não houver modelo."""
+        ativo = PropensityModel._modelo_ativo()
+        if ativo is None or df is None or df.empty:
+            return None
+        try:
+            X = PropensityModel._features(df)
+            return pd.Series(ativo[1].predict_proba(X)[:, 1], index=df.index)
+        except Exception as e:
+            log.warning(f"[IA] Falha na inferência: {e}")
+            return None
+
+    # ── Versionamento / rollback ──────────────────────────
+    @staticmethod
+    def listar_versoes() -> list:
+        try:
+            return executar_query(
+                "SELECT versao, algoritmo, metricas, ativo, criado_em "
+                "FROM model_registry WHERE tipo='propensao' ORDER BY versao DESC"
+            )
+        except Exception:
+            return []
+
+    @staticmethod
+    def ativar_versao(versao: int) -> bool:
+        try:
+            executar_comando("UPDATE model_registry SET ativo=FALSE WHERE tipo='propensao'")
+            n = executar_comando(
+                "UPDATE model_registry SET ativo=TRUE WHERE tipo='propensao' AND versao=:v",
+                {"v": versao},
+            )
+            PropensityModel._cache_modelo = None
+            if n:
+                log.info(f"[IA] Rollback/ativação para a versão v{versao}.")
+            return bool(n)
+        except Exception:
+            return False
+
+    @staticmethod
+    def status() -> dict:
+        ativo = PropensityModel._modelo_ativo()
+        return {
+            "sklearn": _sklearn_disponivel(),
+            "scorer": "ml" if ativo else "heuristico",
+            "versao_ativa": (ativo[0] if ativo else None),
+        }
+
+
+class DecisionEngine:
+    """Motor de decisão baseado em KPIs. Recomenda (humano no loop) qual campanha
+    acelerar/desacelerar, qual mailing priorizar e quando redistribuir agentes."""
+
+    @staticmethod
+    def _analisar(campanhas: list) -> list:
+        recs = []
+        for c in campanhas:
+            cid = c.get("campanha_id") or c.get("campanha") or "?"
+            aband = float(c.get("abandono_pct") or 0)
+            ocio  = float(c.get("ociosidade_pct") or 0)
+            mail  = float(c.get("mailing_restante_pct") if c.get("mailing_restante_pct") is not None else 100)
+            if aband > CFG.LIMITE_ABANDONO_PCT:
+                recs.append({"campanha_id": cid, "acao": "desacelerar_pacing", "severidade": 3,
+                             "motivo": f"Abandono {aband:.1f}% > limite {CFG.LIMITE_ABANDONO_PCT}%"})
+            elif ocio > CFG.LIMITE_OCIOSIDADE_PCT:
+                recs.append({"campanha_id": cid, "acao": "acelerar_pacing", "severidade": 2,
+                             "motivo": f"Ociosidade {ocio:.1f}% > limite {CFG.LIMITE_OCIOSIDADE_PCT}%"})
+            if mail < CFG.LIMITE_MAILING_RESTANTE:
+                recs.append({"campanha_id": cid, "acao": "repor_mailing", "severidade": 3,
+                             "motivo": f"Mailing em {mail:.1f}% (< {CFG.LIMITE_MAILING_RESTANTE}%)"})
+        return sorted(recs, key=lambda r: r["severidade"], reverse=True)
+
+    @staticmethod
+    def recomendar() -> dict:
+        try:
+            rows = executar_query(
+                """
+                SELECT DISTINCT ON (campanha_id)
+                    campanha_id, campanha, ociosidade_pct, abandono_pct, mailing_restante_pct
+                FROM campaign_snapshot
+                WHERE captured_at >= NOW() - INTERVAL '15 minutes'
+                ORDER BY campanha_id, captured_at DESC
+                """
+            )
+        except Exception:
+            rows = []
+        return {"recomendacoes": DecisionEngine._analisar(rows), "ts": datetime.utcnow().isoformat()}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2339,6 +2633,10 @@ def iniciar_scheduler():
     _scheduler.add_job(lambda: _safe_run(ETLService.compactar_snapshots, "Retenção"),
         CronTrigger(hour=3, minute=20), id="retencao_snapshots")
 
+    # Re-treino semanal do modelo de propensão (degrada se sklearn/ dados ausentes).
+    _scheduler.add_job(lambda: _safe_run(PropensityModel.treinar, "IA-Treino"),
+        CronTrigger(day_of_week="sun", hour=4, minute=10), id="ia_treino")
+
     _scheduler.start()
     log.info(f"[Scheduler] {len(_scheduler.get_jobs())} jobs registrados.")
 
@@ -2379,6 +2677,7 @@ JOBS_REGISTRO = {
     "forecast":       lambda: ForecastService.generate_forecast(),
     "feriados_sync":  lambda: HolidayService.sincronizar_feriados_nacionais(),
     "retencao":       ETLService.compactar_snapshots,
+    "ia_treino":      PropensityModel.treinar,
 }
 
 
@@ -2787,6 +3086,29 @@ try:
             return JobQueue.enfileirar(nome, prioridade)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Job '{nome}' não encontrado")
+
+    # ── IA (propensão, versionamento, decisão) ──
+    @app.get("/ia/status", tags=["IA"], dependencies=[Depends(_verificar_token)])
+    def ia_status():
+        return PropensityModel.status()
+
+    @app.post("/ia/treinar", tags=["IA"], dependencies=[Depends(_requer_admin)])
+    def ia_treinar():
+        return PropensityModel.treinar()
+
+    @app.get("/ia/modelos", tags=["IA"], dependencies=[Depends(_verificar_token)])
+    def ia_modelos():
+        return PropensityModel.listar_versoes()
+
+    @app.post("/ia/modelos/{versao}/ativar", tags=["IA"], dependencies=[Depends(_requer_admin)])
+    def ia_ativar(versao: int):
+        if not PropensityModel.ativar_versao(versao):
+            raise HTTPException(status_code=404, detail=f"Versão {versao} não encontrada")
+        return {"message": f"Modelo de propensão v{versao} ativado", "versao": versao}
+
+    @app.get("/ia/decisoes", tags=["IA"], dependencies=[Depends(_verificar_token)])
+    def ia_decisoes():
+        return DecisionEngine.recomendar()
 
     FASTAPI_DISPONIVEL = True
 

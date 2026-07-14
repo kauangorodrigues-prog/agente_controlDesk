@@ -281,3 +281,20 @@ CREATE TABLE IF NOT EXISTS etl_watermark (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_calls_call_id      ON calls (call_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_cpf      ON customers (cpf);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_promessas_id       ON collector_promessas (promessa_id);
+
+
+-- ------------------------------------------------------------
+-- 7. IA — registro de modelos (Fase 5): versionamento + rollback
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS model_registry (
+    id          SERIAL PRIMARY KEY,
+    tipo        TEXT NOT NULL DEFAULT 'propensao',
+    versao      INTEGER NOT NULL,
+    algoritmo   TEXT,
+    metricas    TEXT,                 -- JSON (auc, n_treino, features, ...)
+    caminho     TEXT,                 -- artefato .joblib
+    ativo       BOOLEAN NOT NULL DEFAULT FALSE,
+    criado_em   TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_model_versao UNIQUE (tipo, versao)
+);
+CREATE INDEX IF NOT EXISTS idx_model_ativo ON model_registry (tipo, ativo);

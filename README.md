@@ -24,7 +24,9 @@ Uma única aplicação (`agente_ia_control_desk.py`) que roda em três modos:
 - **PacingService** — ajusta o *pacing* por campanha respeitando guardrails de horário/feriado, com trilha de auditoria.
 - **HolidayService** — gestão de feriados (nacionais/estaduais/municipais/empresa) e janelas de discagem.
 - **MailingScoreService** — valida CPF/telefone e calcula o score de priorização de discagem.
-- **ForecastService** — previsão de volume de chamadas (Prophet, com fallback estatístico).
+- **ForecastService** — previsão de volume de chamadas por **ensemble** (sazonal + EWMA + Prophet se disponível), com feature de feriado.
+- **PropensityModel** — modelo de propensão a pagar (Gradient Boosting) com treino/inferência, versionamento e rollback; alimenta a priorização do mailing (cai para o heurístico sem modelo).
+- **DecisionEngine** — recomendações operacionais por KPI (acelerar/desacelerar, repor mailing), humano no loop.
 - **AuditService** — auditoria operacional (agentes improdutivos, campanhas paradas, mailing crítico).
 - **ReportService** — relatórios intraday em Excel + resumo por webhook.
 - **UpliftService** — mede o ganho de recuperação com grupo de controle (tratado × controle): atribuição determinística e estável por CPF, e relatório com uplift absoluto/relativo e teste de significância (duas proporções).
@@ -175,7 +177,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── test_etl.py             # UPSERT idempotente, dedup, watermark
 │   ├── test_cache.py           # cache TTL, get_or_set, invalidação
 │   ├── test_queue.py           # fila de prioridade, execução sync/enfileirada
-│   └── test_db.py              # read replica, paginação, streaming, ETL paralelo
+│   ├── test_db.py              # read replica, paginação, streaming, ETL paralelo
+│   └── test_ia.py              # propensão, decisão, ensemble de forecast
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -253,6 +256,16 @@ Endurecimento do acesso a dados e paralelização do I/O, tudo com fallback para
 > Nota de escopo: **não** foi feita uma reescrita async total (aiohttp/async SQLAlchemy). O design síncrono (APScheduler, `pd.read_sql`, `to_sql`, rotas sync que já rodam em threadpool) é preservado; o ganho de tempo vem da paralelização do I/O onde importa, sem risco de regressão.
 
 Configurável via `.env` (`POSTGRES_POOL_SIZE`, `POSTGRES_MAX_OVERFLOW`, `DB_STATEMENT_TIMEOUT_MS`, `DB_READ_RETRY`, `DATABASE_REPLICA_URL`, `ETL_PARALELO`).
+
+## IA preditiva (Fase 5)
+
+Degradação graciosa: sem `scikit-learn` (ou sem modelo ativo), o scoring usa o heurístico e o forecast usa sazonal+EWMA — nada quebra.
+
+- **Modelo de propensão a pagar (M10)** — `PropensityModel` treina um Gradient Boosting sobre o histórico (rótulo = recuperado/tem acordo), com **versionamento** (tabela `model_registry` + artefatos `.joblib` em `IA_MODELO_DIR`) e **rollback** (ativar uma versão anterior). A inferência entra no `MailingScoreService`: quando há modelo ativo, o mailing é ordenado por `score_final` (propensão); senão, pelo `score_discagem` heurístico (preservado). Endpoints: `GET /ia/status`, `POST /ia/treinar`, `GET /ia/modelos`, `POST /ia/modelos/{versao}/ativar`.
+- **Forecast ensemble (M11)** — `ForecastService` combina **sazonal + EWMA + Prophet** (se instalado), com feature de **feriado**; persiste as colunas base (schema estável) e retorna também `metodo`/`feriado`.
+- **Motor de decisão (M12)** — `GET /ia/decisoes` recomenda, por KPIs, **acelerar/desacelerar** pacing, **repor mailing** e priorizações (humano no loop — recomenda, não aplica).
+
+Treino re-executado semanalmente (domingo 04:10) e disponível como job (`ia_treino`) na fila. Configurável via `.env` (`IA_MODELO_DIR`, `IA_MIN_AMOSTRAS`).
 
 ## Integração contínua
 

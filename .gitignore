@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Artefatos de modelos de IA (Fase 5)
+models/
