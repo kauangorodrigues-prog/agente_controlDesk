@@ -6,10 +6,20 @@ mod = importlib.import_module("agente_ia_control_desk")
 
 
 def test_modulos_extraidos_importam_isolados():
-    from app.core import resilience
+    from app.core import resilience, cache, database
     from app.utils import validators
+    from app import config
     assert callable(resilience.retry_call)
     assert callable(validators.validar_cpf)
+    assert callable(database.executar_query)
+    assert hasattr(config, "CFG") and hasattr(cache, "CACHE")
+
+
+def test_fachada_banco_compartilha_engine():
+    import app.core.database as dbmod
+    assert mod.engine is dbmod.engine
+    assert mod.executar_query is dbmod.executar_query
+    assert mod.get_db is dbmod.get_db
 
 
 def test_fachada_reexporta_do_pacote():

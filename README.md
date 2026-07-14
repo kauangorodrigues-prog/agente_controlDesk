@@ -165,6 +165,7 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── config.py               #   Config, CFG
 │   ├── core/resilience.py      #   timeout, retry, circuit breaker
 │   ├── core/cache.py           #   MemoryCache/RedisCache, cache_get_or_set
+│   ├── core/database.py        #   engine/réplica, get_db, executar_query/comando
 │   └── utils/validators.py     #   CPF/telefone/tempo (puro)
 ├── celery_app.py               # worker Celery opcional (Fase 3)
 ├── .github/workflows/ci.yml    # CI (pytest a cada push/PR)
@@ -277,7 +278,7 @@ Treino re-executado semanalmente (domingo 04:10) e disponível como job (`ia_tre
 
 Refatoração **incremental e retrocompatível** do módulo único para o pacote `app/` (SOLID, separação de responsabilidades). `agente_ia_control_desk.py` permanece como **fachada** que reexporta a API pública — entrypoints (`python … api`, `uvicorn …:app`), `celery_app.py`, `scripts/` e todos os testes seguem funcionando sem alteração.
 
-Já extraídos (camadas de menor acoplamento, com dependências apenas "para baixo"): `app/config.py` (Config/CFG), `app/core/resilience.py` (timeout/retry/circuit breaker), `app/core/cache.py` (cache com fallback) e `app/utils/validators.py` (CPF/telefone/tempo, puro). A fachada reexporta os **mesmos objetos** (CFG, CACHE) — estado compartilhado preservado. As camadas seguintes (banco, repositórios, serviços, IA, API) são movidas nos próximos passos, sempre mantendo a suíte verde e a fachada estável.
+Já extraídos (camadas de menor acoplamento, com dependências apenas "para baixo"): `app/config.py` (Config/CFG), `app/core/resilience.py` (timeout/retry/circuit breaker), `app/core/cache.py` (cache com fallback), `app/core/database.py` (engine/réplica, `get_db`, `executar_query/comando`, `ler_dataframe`) e `app/utils/validators.py` (CPF/telefone/tempo, puro). A fachada reexporta os **mesmos objetos** (CFG, CACHE, engine) — estado compartilhado preservado. As camadas seguintes (repositórios, integrações, serviços, IA, API) são movidas nos próximos passos, sempre mantendo a suíte verde e a fachada estável.
 
 ## Integração contínua
 

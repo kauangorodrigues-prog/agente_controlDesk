@@ -109,7 +109,9 @@ def test_executar_query_retry(monkeypatch):
     def fake_get_db(leitura=False):
         yield FakeSession()
 
-    monkeypatch.setattr(mod, "get_db", fake_get_db)
+    # executar_query vive em app.core.database (Fase 6) e chama o get_db de lá.
+    import app.core.database as _db
+    monkeypatch.setattr(_db, "get_db", fake_get_db)
     linhas = mod.executar_query("SELECT 1")
     assert linhas == [{"x": 1}]
     assert chamadas["n"] == 2  # falhou 1x, sucesso na 2ª
