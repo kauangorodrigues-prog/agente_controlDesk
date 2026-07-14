@@ -22,6 +22,14 @@ def test_fachada_banco_compartilha_engine():
     assert mod.get_db is dbmod.get_db
 
 
+def test_integracoes_e_alertas_extraidos():
+    import app.integrations.clients as clients
+    import app.alerts.webhook as webhook
+    assert mod.DialerClient is clients.DialerClient
+    assert mod.CollectorClient is clients.CollectorClient
+    assert mod.send_webhook_alert is webhook.send_webhook_alert
+
+
 def test_fachada_reexporta_do_pacote():
     # Os símbolos reexportados apontam para o pacote app (não mais definidos no monólito).
     assert mod.CircuitBreaker.__module__ == "app.core.resilience"

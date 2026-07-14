@@ -166,6 +166,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── core/resilience.py      #   timeout, retry, circuit breaker
 │   ├── core/cache.py           #   MemoryCache/RedisCache, cache_get_or_set
 │   ├── core/database.py        #   engine/réplica, get_db, executar_query/comando
+│   ├── integrations/clients.py #   DialerClient, CollectorClient
+│   ├── alerts/webhook.py       #   send_webhook_alert (throttle + trilha)
 │   └── utils/validators.py     #   CPF/telefone/tempo (puro)
 ├── celery_app.py               # worker Celery opcional (Fase 3)
 ├── .github/workflows/ci.yml    # CI (pytest a cada push/PR)
