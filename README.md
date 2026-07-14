@@ -162,7 +162,9 @@ cálculo de pacing) e não dependem de banco de dados.
 .
 ├── agente_ia_control_desk.py   # fachada: entrypoints + reexporta a API pública
 ├── app/                        # pacote modular (Fase 6, extração incremental)
+│   ├── config.py               #   Config, CFG
 │   ├── core/resilience.py      #   timeout, retry, circuit breaker
+│   ├── core/cache.py           #   MemoryCache/RedisCache, cache_get_or_set
 │   └── utils/validators.py     #   CPF/telefone/tempo (puro)
 ├── celery_app.py               # worker Celery opcional (Fase 3)
 ├── .github/workflows/ci.yml    # CI (pytest a cada push/PR)
@@ -275,7 +277,7 @@ Treino re-executado semanalmente (domingo 04:10) e disponível como job (`ia_tre
 
 Refatoração **incremental e retrocompatível** do módulo único para o pacote `app/` (SOLID, separação de responsabilidades). `agente_ia_control_desk.py` permanece como **fachada** que reexporta a API pública — entrypoints (`python … api`, `uvicorn …:app`), `celery_app.py`, `scripts/` e todos os testes seguem funcionando sem alteração.
 
-Já extraídos (camadas de menor acoplamento, com dependências apenas "para baixo"): `app/core/resilience.py` (timeout/retry/circuit breaker) e `app/utils/validators.py` (CPF/telefone/tempo, puro). As camadas seguintes (config, cache, banco, repositórios, serviços, IA, API) são movidas nos próximos passos, sempre mantendo a suíte verde e a fachada estável.
+Já extraídos (camadas de menor acoplamento, com dependências apenas "para baixo"): `app/config.py` (Config/CFG), `app/core/resilience.py` (timeout/retry/circuit breaker), `app/core/cache.py` (cache com fallback) e `app/utils/validators.py` (CPF/telefone/tempo, puro). A fachada reexporta os **mesmos objetos** (CFG, CACHE) — estado compartilhado preservado. As camadas seguintes (banco, repositórios, serviços, IA, API) são movidas nos próximos passos, sempre mantendo a suíte verde e a fachada estável.
 
 ## Integração contínua
 

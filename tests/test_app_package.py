@@ -17,6 +17,16 @@ def test_fachada_reexporta_do_pacote():
     assert mod.CircuitBreaker.__module__ == "app.core.resilience"
     assert mod.retry_call.__module__ == "app.core.resilience"
     assert mod.validar_cpf.__module__ == "app.utils.validators"
+    assert type(mod.CFG).__module__ == "app.config"
+    assert type(mod.CACHE).__module__ == "app.core.cache"
+
+
+def test_fachada_compartilha_os_mesmos_objetos():
+    # Compartilhar a MESMA instância é o que mantém monkeypatch/estado funcionando.
+    from app.config import CFG as CFG_pkg
+    from app.core.cache import CACHE as CACHE_pkg
+    assert mod.CFG is CFG_pkg
+    assert mod.CACHE is CACHE_pkg
 
 
 def test_api_publica_preservada():
