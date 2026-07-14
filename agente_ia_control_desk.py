@@ -120,6 +120,14 @@ class Config:
         self.CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "")
         self.QUEUE_WORKERS         = int(os.getenv("QUEUE_WORKERS", "2"))
 
+        # ── Banco: pool, timeout, retry, read replica (Fase 4) ──
+        self.POSTGRES_POOL_SIZE      = int(os.getenv("POSTGRES_POOL_SIZE", "5"))
+        self.POSTGRES_MAX_OVERFLOW   = int(os.getenv("POSTGRES_MAX_OVERFLOW", "10"))
+        self.DB_STATEMENT_TIMEOUT_MS = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "0"))  # 0 = sem limite
+        self.DB_READ_RETRY           = int(os.getenv("DB_READ_RETRY", "2"))
+        self.DATABASE_REPLICA_URL    = os.getenv("DATABASE_REPLICA_URL", "")  # vazio = usa a primária
+        self.ETL_PARALELO            = os.getenv("ETL_PARALELO", "true").lower() == "true"
+
         # ── CORS ────────────────────────────────────────────
         # Lista separada por vírgula; "*" libera todas as origens
         # (aceitável só em desenvolvimento).
@@ -185,18 +193,23 @@ CFG = Config()
 # 2. BANCO DE DADOS
 # ══════════════════════════════════════════════════════════════════════
 
-def _criar_engine():
+def _criar_engine(url: str = None):
     try:
         from sqlalchemy import create_engine
         from sqlalchemy.pool import QueuePool
+        connect_args = {}
+        if CFG.DB_STATEMENT_TIMEOUT_MS > 0:
+            # Aborta consultas que passem do limite (evita queries presas).
+            connect_args["options"] = f"-c statement_timeout={CFG.DB_STATEMENT_TIMEOUT_MS}"
         return create_engine(
-            CFG.DATABASE_URL,
+            url or CFG.DATABASE_URL,
             poolclass=QueuePool,
-            pool_size=5,
-            max_overflow=10,
+            pool_size=CFG.POSTGRES_POOL_SIZE,
+            max_overflow=CFG.POSTGRES_MAX_OVERFLOW,
             pool_timeout=30,
             pool_recycle=1800,
             pool_pre_ping=True,
+            connect_args=connect_args,
             echo=(CFG.AMBIENTE == "development"),
         )
     except Exception as e:
@@ -204,21 +217,32 @@ def _criar_engine():
         return None
 
 
-engine = _criar_engine()
+engine = _criar_engine()  # primária (leitura + escrita)
+# Réplica de leitura opcional; sem DATABASE_REPLICA_URL usa a primária.
+engine_leitura = _criar_engine(CFG.DATABASE_REPLICA_URL) if CFG.DATABASE_REPLICA_URL else engine
+
+
+def _erros_transientes_db() -> tuple:
+    try:
+        from sqlalchemy.exc import OperationalError, InterfaceError, InternalError
+        return (OperationalError, InterfaceError, InternalError)
+    except Exception:
+        return (Exception,)
 
 
 @contextmanager
-def get_db():
-    """Context manager para sessão SQLAlchemy."""
+def get_db(leitura: bool = False):
+    """Sessão SQLAlchemy. leitura=True usa a réplica (se configurada)."""
     from sqlalchemy.orm import sessionmaker
-    if engine is None:
+    eng = engine_leitura if leitura else engine
+    if eng is None:
         raise RuntimeError("Banco de dados não configurado.")
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=eng)
     session = Session()
     try:
         yield session
         session.commit()
-    except Exception as e:
+    except Exception:
         session.rollback()
         raise
     finally:
@@ -226,24 +250,49 @@ def get_db():
 
 
 def executar_query(sql: str, params: dict = None) -> list:
+    """Leitura (réplica se disponível) com retry em erros transientes de conexão."""
     from sqlalchemy import text
-    with get_db() as session:
-        result = session.execute(text(sql), params or {})
-        cols = result.keys()
-        return [dict(zip(cols, row)) for row in result.fetchall()]
+
+    def _exec():
+        with get_db(leitura=True) as session:
+            result = session.execute(text(sql), params or {})
+            cols = result.keys()
+            return [dict(zip(cols, row)) for row in result.fetchall()]
+
+    if CFG.DB_READ_RETRY and CFG.DB_READ_RETRY > 0:
+        # Só reexecuta em desconexão real; NUNCA em statement_timeout/erro de
+        # consulta (reexecutar uma query lenta só amplia a carga).
+        return retry_call(
+            _exec, max_retries=CFG.DB_READ_RETRY, base_delay=0.5, max_delay=4.0,
+            exceptions=_erros_transientes_db(), nome="db_read",
+            retriavel=lambda e: bool(getattr(e, "connection_invalidated", False)),
+        )
+    return _exec()
 
 
 def executar_comando(sql: str, params: dict = None) -> int:
+    # Escrita na primária. Sem retry automático de propósito: reexecutar um
+    # comando pode aplicá-lo duas vezes. pool_pre_ping trata conexões velhas.
     from sqlalchemy import text
     with get_db() as session:
         result = session.execute(text(sql), params or {})
         return result.rowcount
 
 
-def testar_conexao() -> bool:
+def ler_dataframe(sql: str, params: dict = None):
+    """Lê um DataFrame pela réplica de leitura (offload de consultas pesadas)."""
+    from sqlalchemy import text
+    if engine_leitura is None:
+        raise RuntimeError("Banco de dados não configurado.")
+    with engine_leitura.connect() as conn:
+        return pd.read_sql(text(sql), conn, params=params or {})
+
+
+def testar_conexao(leitura: bool = False) -> bool:
     try:
         from sqlalchemy import text
-        with engine.connect() as conn:
+        eng = engine_leitura if leitura else engine
+        with eng.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
     except Exception:
@@ -407,6 +456,9 @@ def health_database() -> dict:
             d["pool_checked_out"] = engine.pool.checkedout()
     except Exception:
         pass
+    # Réplica de leitura (se configurada) — verifica separadamente.
+    if CFG.DATABASE_REPLICA_URL:
+        d["replica"] = {"status": "ok" if testar_conexao(leitura=True) else "erro"}
     return d
 
 
@@ -517,13 +569,18 @@ def executar_com_timeout(fn, timeout_s: float, nome: str = ""):
 
 def retry_call(fn, max_retries: int = 3, base_delay: float = 1.0,
                max_delay: float = 30.0, exceptions: tuple = (Exception,),
-               nome: str = "", on_retry=None):
-    """Executa fn com retry de backoff exponencial. Reutilizável por jobs e I/O."""
+               nome: str = "", on_retry=None, retriavel=None):
+    """Executa fn com retry de backoff exponencial. Reutilizável por jobs e I/O.
+
+    `retriavel(e)` opcional: se fornecido e retornar False, a exceção é
+    propagada sem retry (ex.: não reexecutar um statement_timeout)."""
     tentativa = 0
     while True:
         try:
             return fn()
         except exceptions as e:
+            if retriavel is not None and not retriavel(e):
+                raise
             tentativa += 1
             if tentativa > max_retries:
                 raise
@@ -1004,6 +1061,52 @@ class PostgresRepository:
             session.execute(text(sql), linhas)
         return len(linhas)
 
+    @staticmethod
+    def bulk_insert(tabela: str, df: pd.DataFrame) -> int:
+        """INSERT em lote (executemany). Complementa o UPSERT quando não há
+        chave natural."""
+        if df is None or df.empty:
+            return 0
+        from sqlalchemy import text
+        _ident(tabela)
+        cols = [_ident(c) for c in df.columns]
+        sql = (f"INSERT INTO {tabela} ({', '.join(cols)}) "
+               f"VALUES ({', '.join(':' + c for c in cols)})")
+        linhas = PostgresRepository._linhas(df)
+        with get_db() as session:
+            session.execute(text(sql), linhas)
+        return len(linhas)
+
+    @staticmethod
+    def paginar(sql: str, params: dict = None, pagina: int = 1, por_pagina: int = 50) -> dict:
+        """Paginação por LIMIT/OFFSET. Detecta próxima página buscando N+1."""
+        pagina = max(int(pagina), 1)
+        por_pagina = min(max(int(por_pagina), 1), 500)
+        offset = (pagina - 1) * por_pagina
+        p = dict(params or {})
+        p["_limit"] = por_pagina + 1          # +1 para saber se há próxima
+        p["_offset"] = offset
+        linhas = executar_query(f"{sql} LIMIT :_limit OFFSET :_offset", p)
+        tem_proxima = len(linhas) > por_pagina
+        return {
+            "itens": linhas[:por_pagina],
+            "pagina": pagina,
+            "por_pagina": por_pagina,
+            "tem_proxima": tem_proxima,
+        }
+
+    @staticmethod
+    def stream_query(sql: str, params: dict = None, lote: int = 1000):
+        """Gera linhas em lotes via cursor server-side (leitura de grandes volumes)."""
+        from sqlalchemy import text
+        if engine_leitura is None:
+            raise RuntimeError("Banco de dados não configurado.")
+        with engine_leitura.connect().execution_options(stream_results=True, yield_per=lote) as conn:
+            result = conn.execute(text(sql), params or {})
+            cols = result.keys()
+            for row in result:
+                yield dict(zip(cols, row))
+
 
 class WatermarkRepository:
     """Checkpoint incremental (CDC): último valor processado por fonte."""
@@ -1095,15 +1198,55 @@ class ETLService:
         return {"removidas": total, "dias": dias}
 
     @staticmethod
+    def _coletar(tarefas: dict) -> dict:
+        """Executa as coletas (HTTP) em paralelo (ETL_PARALELO) ou em sequência.
+        Retorna {nome: dados}; em falha, loga e devolve [] para aquela fonte.
+        Paralelizar as chamadas independentes reduz muito o tempo de parede do ETL."""
+        resultados = {}
+        if CFG.ETL_PARALELO and len(tarefas) > 1:
+            ctx = contextvars.copy_context()  # propaga o correlation id
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(tarefas), thread_name_prefix="etlfetch") as ex:
+                futuros = {ex.submit(ctx.run, fn): nome for nome, fn in tarefas.items()}
+                for fut in concurrent.futures.as_completed(futuros):
+                    nome = futuros[fut]
+                    try:
+                        resultados[nome] = fut.result()
+                    except Exception:
+                        log.error(f"[ETL] Coleta '{nome}' falhou:\n{traceback.format_exc()}")
+                        resultados[nome] = []
+        else:
+            for nome, fn in tarefas.items():
+                try:
+                    resultados[nome] = fn()
+                except Exception:
+                    log.error(f"[ETL] Coleta '{nome}' falhou:\n{traceback.format_exc()}")
+                    resultados[nome] = []
+        return resultados
+
+    @staticmethod
     def run_etl() -> dict:
         log.info("=== ETL Iniciado ===")
         inicio = datetime.utcnow()
         resultado = {}
+        ontem = (date.today() - timedelta(days=1)).isoformat()
+        desde = WatermarkRepository.get("calls", default=ontem)  # incremental (CDC)
+        hoje = date.today().isoformat()
 
+        # Fase 1: coleta paralela das fontes independentes (HTTP — o gargalo).
+        dados = ETLService._coletar({
+            "agents":            DialerClient.get_agents,
+            "calls":             lambda: DialerClient.get_calls(data_inicio=desde),
+            "campaign_snapshot": DialerClient.get_campaign_snapshot,
+            "mailing_status":    DialerClient.get_mailing_status,
+            "customers":         CollectorClient.get_customers,
+            "promises":          lambda: CollectorClient.get_promises(data=hoje),
+        })
+
+        # Fase 2: transformação + persistência (sequencial, com isolamento por fonte).
         # Agentes
         try:
-            dados = DialerClient.get_agents()
-            df = pd.DataFrame(dados)
+            df = pd.DataFrame(dados.get("agents") or [])
             if not df.empty and "status" in df.columns:
                 df["status"] = df["status"].str.upper().str.strip()
             resultado["agentes"] = ETLService._salvar(df, "agents", {"agente_id", "nome", "status"})
@@ -1113,14 +1256,10 @@ class ETLService:
 
         # Chamadas (incremental via watermark / CDC)
         try:
-            ontem = (date.today() - timedelta(days=1)).isoformat()
-            desde = WatermarkRepository.get("calls", default=ontem)  # só registros novos
-            dados = DialerClient.get_calls(data_inicio=desde)
-            df = pd.DataFrame(dados)
+            df = pd.DataFrame(dados.get("calls") or [])
             if not df.empty and "telefone" in df.columns:
                 df["ddd"] = df["telefone"].astype(str).str.replace(r"\D", "", regex=True).str[:2]
             resultado["chamadas"] = ETLService._salvar(df, "calls", {"call_id", "status"})
-            # Avança o checkpoint para o maior iniciada_em processado.
             if not df.empty and "iniciada_em" in df.columns:
                 try:
                     maxdt = pd.to_datetime(df["iniciada_em"], errors="coerce").max()
@@ -1134,24 +1273,23 @@ class ETLService:
 
         # Snapshot campanhas
         try:
-            dados = DialerClient.get_campaign_snapshot()
-            resultado["campanhas"] = ETLService._salvar(pd.DataFrame(dados), "campaign_snapshot")
+            resultado["campanhas"] = ETLService._salvar(
+                pd.DataFrame(dados.get("campaign_snapshot") or []), "campaign_snapshot")
         except Exception:
             log.error(f"[ETL] Falha snapshot:\n{traceback.format_exc()}")
             resultado["campanhas"] = 0
 
         # Mailing status
         try:
-            dados = DialerClient.get_mailing_status()
-            resultado["mailing"] = ETLService._salvar(pd.DataFrame(dados), "mailing_status")
+            resultado["mailing"] = ETLService._salvar(
+                pd.DataFrame(dados.get("mailing_status") or []), "mailing_status")
         except Exception:
             log.error(f"[ETL] Falha mailing:\n{traceback.format_exc()}")
             resultado["mailing"] = 0
 
         # Clientes CRM / Cobrador
         try:
-            dados = CollectorClient.get_customers()
-            df = pd.DataFrame(dados)
+            df = pd.DataFrame(dados.get("customers") or [])
             if not df.empty and "telefone" in df.columns:
                 df["telefone_limpo"] = df["telefone"].astype(str).str.replace(r"\D", "", regex=True)
                 df["ddd"] = df["telefone_limpo"].str[:2]
@@ -1162,8 +1300,8 @@ class ETLService:
 
         # Promessas
         try:
-            dados = CollectorClient.get_promises(data=date.today().isoformat())
-            resultado["promessas"] = ETLService._salvar(pd.DataFrame(dados), "collector_promessas")
+            resultado["promessas"] = ETLService._salvar(
+                pd.DataFrame(dados.get("promises") or []), "collector_promessas")
         except Exception:
             log.error(f"[ETL] Falha promessas:\n{traceback.format_exc()}")
             resultado["promessas"] = 0
@@ -1186,8 +1324,9 @@ class OccupancyService:
 
     @staticmethod
     def _ler_agentes() -> pd.DataFrame:
+        # Leitura frequente (a cada minuto) → usa a réplica quando configurada.
         df = pd.read_sql(
-            "SELECT * FROM agents WHERE captured_at >= NOW() - INTERVAL '6 minutes'", engine
+            "SELECT * FROM agents WHERE captured_at >= NOW() - INTERVAL '6 minutes'", engine_leitura
         )
         if not df.empty:
             df["status_norm"] = df["status"].astype(str).str.lower().str.strip()
@@ -2453,10 +2592,15 @@ try:
     def health_ia_ep():
         return health_ia()
 
-    # ── Dead Letter Queue (falhas terminais de jobs) ──
+    # ── Dead Letter Queue (falhas terminais de jobs) — paginado ──
     @app.get("/dlq", tags=["Health"], dependencies=[Depends(_verificar_token)])
-    def listar_dlq(limite: int = Query(50)):
-        return {"total": DeadLetterQueue.contar(), "itens": DeadLetterQueue.listar(limite)}
+    def listar_dlq(pagina: int = Query(1), por_pagina: int = Query(50)):
+        page = PostgresRepository.paginar(
+            "SELECT * FROM dead_letter_queue ORDER BY criado_em DESC",
+            pagina=pagina, por_pagina=por_pagina,
+        )
+        page["total"] = DeadLetterQueue.contar()
+        return page
 
     # ── ETL
     @app.post("/etl/run", tags=["ETL"], dependencies=[Depends(_verificar_token)])

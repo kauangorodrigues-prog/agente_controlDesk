@@ -174,7 +174,8 @@ cálculo de pacing) e não dependem de banco de dados.
 │   ├── test_resilience.py      # retry, circuit breaker, timeout, DLQ
 │   ├── test_etl.py             # UPSERT idempotente, dedup, watermark
 │   ├── test_cache.py           # cache TTL, get_or_set, invalidação
-│   └── test_queue.py           # fila de prioridade, execução sync/enfileirada
+│   ├── test_queue.py           # fila de prioridade, execução sync/enfileirada
+│   └── test_db.py              # read replica, paginação, streaming, ETL paralelo
 ├── docs/
 │   └── estrategia-cobra-ai.md  # documento estratégico
 ├── requirements.txt
@@ -238,6 +239,20 @@ Configurável via `.env` (`ETL_UPSERT`, `ETL_RETENCAO_DIAS`).
 Endpoints: `GET /jobs` (lista + estado da fila), `POST /jobs/{nome}/executar` (sync), `POST /jobs/{nome}/enfileirar?prioridade=HIGH`.
 
 Configurável via `.env` (`REDIS_URL`, `CACHE_TTL_SEG`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `QUEUE_WORKERS`). O `docker compose up` sobe também **Redis** e um **worker Celery**.
+
+## Banco & paralelismo (Fase 4)
+
+Endurecimento do acesso a dados e paralelização do I/O, tudo com fallback para o comportamento atual.
+
+- **Read replica** — `DATABASE_REPLICA_URL` roteia leituras (`executar_query`, `ler_dataframe`, ocupação) para a réplica; sem ela, tudo usa a primária (`engine_leitura is engine`). Escritas sempre na primária.
+- **Pool & statement timeout** — `POSTGRES_POOL_SIZE`/`POSTGRES_MAX_OVERFLOW` e `DB_STATEMENT_TIMEOUT_MS` (aborta consultas presas).
+- **Retry de leitura** — `executar_query` reexecuta **apenas em desconexão real** (`connection_invalidated`), nunca em `statement_timeout`/erro de query (evitaria só ampliar carga).
+- **Repository** — `PostgresRepository` ganha `paginar` (LIMIT/OFFSET com detecção de próxima página), `stream_query` (cursor server-side para grandes volumes) e `bulk_insert`. `/dlq` já é paginado (`?pagina=&por_pagina=`).
+- **ETL paralelo (M2)** — a coleta HTTP das 6 fontes roda em paralelo (`ETL_PARALELO`), reduzindo o tempo de parede do ETL; a persistência segue sequencial e isolada por fonte.
+
+> Nota de escopo: **não** foi feita uma reescrita async total (aiohttp/async SQLAlchemy). O design síncrono (APScheduler, `pd.read_sql`, `to_sql`, rotas sync que já rodam em threadpool) é preservado; o ganho de tempo vem da paralelização do I/O onde importa, sem risco de regressão.
+
+Configurável via `.env` (`POSTGRES_POOL_SIZE`, `POSTGRES_MAX_OVERFLOW`, `DB_STATEMENT_TIMEOUT_MS`, `DB_READ_RETRY`, `DATABASE_REPLICA_URL`, `ETL_PARALELO`).
 
 ## Integração contínua
 
