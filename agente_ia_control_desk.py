@@ -330,10 +330,22 @@ log = logging.getLogger("ControlDesk")
 # ══════════════════════════════════════════════════════════════════════
 
 # ── Métricas Prometheus de jobs (degradam se a lib estiver ausente) ──
+def registrar_metrica(factory, nome, *args):
+    """Cria uma métrica Prometheus de forma idempotente. Se o módulo for
+    importado mais de uma vez no mesmo processo (ex.: `python … api`, que
+    executa como __main__ e reimporta), reaproveita o coletor já registrado
+    em vez de estourar 'Duplicated timeseries'."""
+    try:
+        return factory(nome, *args)
+    except ValueError:
+        from prometheus_client import REGISTRY
+        return REGISTRY._names_to_collectors.get(nome)
+
+
 try:
     from prometheus_client import Counter as _PCounter, Histogram as _PHistogram
-    JOB_RUNS_TOTAL = _PCounter("cd_job_runs_total", "Execuções de jobs", ["job", "status"])
-    JOB_DURATION_SECONDS = _PHistogram("cd_job_duration_seconds", "Duração dos jobs (s)", ["job"])
+    JOB_RUNS_TOTAL = registrar_metrica(_PCounter, "cd_job_runs_total", "Execuções de jobs", ["job", "status"])
+    JOB_DURATION_SECONDS = registrar_metrica(_PHistogram, "cd_job_duration_seconds", "Duração dos jobs (s)", ["job"])
     _PROM_JOBS = True
 except Exception:  # pragma: no cover
     JOB_RUNS_TOTAL = JOB_DURATION_SECONDS = None
@@ -2325,7 +2337,7 @@ try:
 
     pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
     oauth2  = OAuth2PasswordBearer(tokenUrl="/auth/token")
-    REQ_COUNT = Counter("cd_requests_total", "Requisições", ["endpoint"])
+    REQ_COUNT = registrar_metrica(Counter, "cd_requests_total", "Requisições", ["endpoint"])
 
     def _criar_token(data: dict) -> str:
         payload = {**data, "exp": datetime.utcnow() + timedelta(minutes=CFG.JWT_EXPIRE_MINUTES)}
@@ -2862,8 +2874,11 @@ if __name__ == "__main__":
         rodar_dashboard()
     elif len(sys.argv) > 1 and sys.argv[1] == "api":
         # python agente_ia_control_desk.py api
+        # Passa o objeto `app` (não a string de import) para NÃO reimportar o
+        # módulo — evita registrar as métricas Prometheus duas vezes.
+        # Para hot-reload em dev: `uvicorn agente_ia_control_desk:app --reload`.
         import uvicorn
-        uvicorn.run("agente_ia_control_desk:app", host="0.0.0.0", port=8000, reload=True)
+        uvicorn.run(app, host="0.0.0.0", port=8000)
     else:
         # python agente_ia_control_desk.py  → modo standalone com scheduler
         log.info("🚀 Iniciando Agente IA Control Desk — modo standalone")

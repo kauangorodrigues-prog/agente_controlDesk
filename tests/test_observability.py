@@ -74,3 +74,13 @@ def test_ping_api_nao_configurado():
     d = mod._ping_api("", "")
     assert d["status"] == "nao_configurado"
     assert d["reachable"] is None
+
+
+# ── Métrica idempotente (evita 'Duplicated timeseries' em reimport) ──
+def test_registrar_metrica_idempotente():
+    prom = pytest.importorskip("prometheus_client")
+    Counter = prom.Counter
+    c1 = mod.registrar_metrica(Counter, "cd_teste_idemp", "doc", ["a"])
+    c2 = mod.registrar_metrica(Counter, "cd_teste_idemp", "doc", ["a"])
+    assert c1 is c2                 # reaproveita o coletor já registrado
+    c2.labels(a="x").inc()          # e continua utilizável (não é None)
