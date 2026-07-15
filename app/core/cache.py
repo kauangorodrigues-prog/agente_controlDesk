@@ -101,11 +101,16 @@ CACHE = _build_cache()
 
 
 def cache_get_or_set(chave: str, ttl: int, produtor):
-    """Retorna o valor cacheado ou executa `produtor()`, cacheia e retorna."""
+    """Retorna o valor cacheado ou executa `produtor()`, cacheia e retorna.
+
+    Não cacheia resultados vazios ({}/[]/None): eles costumam indicar uma falha
+    transitória do produtor e cacheá-los mascararia a recuperação até o TTL —
+    além de serem baratos de recomputar.
+    """
     valor = CACHE.get(chave)
     if valor is not None:
         return valor
     valor = produtor()
-    if valor is not None:
+    if valor:  # só cacheia valores não-vazios
         CACHE.set(chave, valor, ttl)
     return valor

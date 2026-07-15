@@ -114,3 +114,22 @@ def test_treinar_com_dados_sinteticos():
     assert r["status"] == "treinado"
     assert r["n_treino"] > 0 and r["n_teste"] > 0
     assert r["auc"] is None or 0.0 <= r["auc"] <= 1.0
+
+
+def test_treinar_classe_minoritaria_com_1_amostra_nao_quebra(monkeypatch):
+    # nunique==2 mas a classe positiva tem só 1 amostra: stratify=y quebraria.
+    pytest.importorskip("sklearn")
+    import numpy as np
+    n = 250
+    df = pd.DataFrame({
+        "previous_cpc": np.random.default_rng(3).random(n),
+        "days_delay": np.random.default_rng(4).integers(0, 120, n),
+        "faixa_atraso_dias": np.random.default_rng(5).integers(0, 120, n),
+        "phone_score": np.random.default_rng(6).random(n) * 10,
+        "ddd": ["11"] * n,
+        "promessa_quebrada": [0] * n,
+    })
+    y = [0] * (n - 1) + [1]  # uma única amostra positiva
+    monkeypatch.setattr(mod.PropensityModel, "_registrar_versao", staticmethod(lambda *a, **k: None))
+    r = mod.PropensityModel.treinar(df=df, y=y)   # não deve lançar
+    assert r["status"] == "treinado"

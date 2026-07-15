@@ -1295,8 +1295,29 @@ class ForecastService:
         return pd.DataFrame(rows)
 
     @staticmethod
+    def _feriados_no_horizonte(ds: pd.Series) -> pd.Series:
+        """True/False por linha se a data é feriado — uma única query no horizonte."""
+        try:
+            dmin = pd.Timestamp(ds.min()).date().isoformat()
+            dmax = pd.Timestamp(ds.max()).date().isoformat()
+            rows = executar_query(
+                "SELECT DISTINCT data FROM feriados WHERE data BETWEEN :i AND :f",
+                {"i": dmin, "f": dmax},
+            )
+            datas = {str(r["data"]) for r in rows}
+        except Exception:
+            datas = set()
+        return ds.apply(lambda d: pd.Timestamp(d).date().isoformat() in datas)
+
+    @staticmethod
     def _ensemble(df: pd.DataFrame, periodos: int) -> pd.DataFrame:
-        """Ensemble: média das previsões disponíveis (sazonal + EWMA + Prophet)."""
+        """Ensemble: média das previsões disponíveis (sazonal + EWMA + Prophet).
+
+        Combina por POSIÇÃO (todas as fontes produzem `periodos` passos em ordem
+        cronológica a partir do mesmo instante), evitando o join por `ds` que
+        deixaria o Prophet cair silenciosamente do ensemble em caso de
+        desalinhamento de timestamp/timezone.
+        """
         metodos = {
             "sazonal": ForecastService._fallback(df, periodos)[["ds", "yhat"]],
             "ewma":    ForecastService._ewma(df, periodos)[["ds", "yhat"]],
@@ -1310,12 +1331,11 @@ class ForecastService:
         except Exception as e:
             log.info(f"[Forecast] Prophet fora do ensemble ({e}).")
 
-        base = metodos["sazonal"][["ds"]].copy()
-        cols = []
-        for nome, fcm in metodos.items():
-            base = base.merge(fcm.rename(columns={"yhat": f"yhat_{nome}"}), on="ds", how="left")
-            cols.append(f"yhat_{nome}")
-        base["yhat"] = base[cols].mean(axis=1).round().clip(lower=0)
+        yhats = pd.DataFrame({
+            nome: fcm["yhat"].reset_index(drop=True) for nome, fcm in metodos.items()
+        })
+        base = pd.DataFrame({"ds": metodos["sazonal"]["ds"].reset_index(drop=True)})
+        base["yhat"] = yhats.mean(axis=1).round().clip(lower=0)
         base["yhat_lower"] = (base["yhat"] * 0.80).round().clip(lower=0)
         base["yhat_upper"] = (base["yhat"] * 1.20).round()
         base["metodo"] = "ensemble(" + "+".join(metodos) + ")"
@@ -1330,8 +1350,10 @@ class ForecastService:
             return pd.DataFrame()
 
         fc = ForecastService._ensemble(df, periodos)
-        # Feature de feriado (dia útil × feriado afeta o volume).
-        fc["feriado"] = fc["ds"].apply(lambda d: HolidayService.e_feriado(pd.Timestamp(d).date())[0])
+        # Feature de feriado (dia útil × feriado afeta o volume). Busca os
+        # feriados do horizonte numa única query e independe de PAUSAR_EM_FERIADOS
+        # (que é uma decisão de pacing, não de previsão).
+        fc["feriado"] = ForecastService._feriados_no_horizonte(fc["ds"])
         fc["agentes_necessarios"] = (fc["yhat"] * (tma_min / 60)).apply(np.ceil).clip(lower=0).astype(int)
         fc["gerado_em"] = datetime.utcnow()
 
@@ -1451,7 +1473,11 @@ class PropensityModel:
         import joblib
 
         X = PropensityModel._features(df)
-        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+        # Estratifica só quando toda classe tem ≥2 amostras; senão o
+        # train_test_split estratificado lançaria ValueError.
+        estratos = y if y.value_counts().min() >= 2 else None
+        Xtr, Xte, ytr, yte = train_test_split(
+            X, y, test_size=0.25, random_state=42, stratify=estratos)
         modelo = GradientBoostingClassifier(random_state=42)
         modelo.fit(Xtr, ytr)
         try:

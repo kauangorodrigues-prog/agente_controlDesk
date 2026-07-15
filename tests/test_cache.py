@@ -49,6 +49,20 @@ def test_cache_get_or_set_chama_produtor_uma_vez():
     assert chamadas["n"] == 1  # o segundo veio do cache
 
 
+def test_cache_get_or_set_nao_cacheia_vazio():
+    # Resultado vazio (falha transitória) NÃO deve ser cacheado.
+    mod.CACHE.clear()
+    chamadas = {"n": 0}
+
+    def vazio():
+        chamadas["n"] += 1
+        return []
+
+    mod.cache_get_or_set("k-vazio", 60, vazio)
+    mod.cache_get_or_set("k-vazio", 60, vazio)
+    assert chamadas["n"] == 2  # recomputou (não mascarou a falha)
+
+
 def test_build_cache_memoria_sem_redis(monkeypatch):
     monkeypatch.setattr(mod.CFG, "REDIS_URL", "")
     assert isinstance(mod._build_cache(), mod.MemoryCache)
