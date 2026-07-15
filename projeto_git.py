@@ -1334,11 +1334,19 @@ try:
     from jose import JWTError, jwt
     from passlib.context import CryptContext
     from pydantic import BaseModel
-    from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import Counter, REGISTRY
 
     pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    oauth2  = OAuth2PasswordBearer(tokenUrl="/auth/token")
-    REQ_COUNT = Counter("cd_requests_total", "Requisições", ["endpoint"])
+    oauth2 = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+    if "cd_requests_total" in REGISTRY._names_to_collectors:
+        REQ_COUNT = REGISTRY._names_to_collectors["cd_requests_total"]
+    else:
+        REQ_COUNT = Counter(
+           "cd_requests_total",
+           "Requisições",
+           ["endpoint"]
+        ) 
 
     def _criar_token(data: dict) -> str:
         payload = {**data, "exp": datetime.utcnow() + timedelta(minutes=CFG.JWT_EXPIRE_MINUTES)}
@@ -1368,13 +1376,13 @@ try:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        log.info("=== Agente IA Control Desk iniciando ===")
+        log.info("=== projeto_git.py iniciando ===")
         iniciar_scheduler()
         yield
         parar_scheduler()
 
     app = FastAPI(
-        title="Agente IA Control Desk",
+        title="projeto_git.py",
         version="2.0.0",
         lifespan=lifespan,
     )
@@ -1626,7 +1634,7 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════
 
 def rodar_dashboard():
-    """Execute com: streamlit run agente_ia_control_desk.py"""
+    """Execute com: streamlit run projeto_git.py"""
     try:
         import streamlit as st
         import plotly.express as px
@@ -1838,19 +1846,21 @@ def rodar_dashboard():
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
-        # python agente_ia_control_desk.py dashboard
-        rodar_dashboard()
-    elif len(sys.argv) > 1 and sys.argv[1] == "api":
-        # python agente_ia_control_desk.py api
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "api":
         import uvicorn
-        uvicorn.run("agente_ia_control_desk:app", host="0.0.0.0", port=8000, reload=True)
+
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8000,
+            reload=False,
+        )
+
     else:
-        # python agente_ia_control_desk.py  → modo standalone com scheduler
         log.info("🚀 Iniciando Agente IA Control Desk — modo standalone")
-        send_webhook_alert("🤖 Agente IA Control Desk iniciado.", nivel="INFO", chave="startup", forcar=True)
+
         iniciar_scheduler()
-        log.info("Scheduler rodando. Pressione Ctrl+C para encerrar.")
+
         try:
             while True:
                 time.sleep(30)
