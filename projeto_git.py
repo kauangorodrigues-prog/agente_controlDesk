@@ -4,6 +4,7 @@ from __future__ import annotations
 # IMPORTS GLOBAIS
 # ══════════════════════════════════════════════════════════════════════
 
+import json
 import logging
 import os
 import re
@@ -22,6 +23,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import requests
+
+import lgpd
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -84,6 +87,19 @@ class Config:
         # ── Ambiente ────────────────────────────────────────
         self.AMBIENTE  = os.getenv("AMBIENTE",  "development")
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+        # ── LGPD (Lei nº 13.709/2018) ───────────────────────
+        # Salt do hash de CPF usado nas trilhas de acesso (pseudonimização).
+        self.LGPD_HASH_SALT     = os.getenv("LGPD_HASH_SALT", "")
+        # Prazo de retenção de dados pessoais (dias). Ajuste à sua política jurídica.
+        self.LGPD_RETENCAO_DIAS = int(os.getenv("LGPD_RETENCAO_DIAS", "1825"))  # ~5 anos
+        # Mapa das fontes de PII (JSON). Ex.:
+        # [{"tabela":"mailing_scored","coluna_cpf":"cpf",
+        #   "colunas_pii":["cpf","nome","telefone","email"],"coluna_data":"captured_at"}]
+        try:
+            self.LGPD_FONTES_PII = json.loads(os.getenv("LGPD_FONTES_PII", "") or "null")
+        except (ValueError, TypeError):
+            self.LGPD_FONTES_PII = None
 
     @property
     def DATABASE_URL(self) -> str:
@@ -195,6 +211,11 @@ logging.basicConfig(
     handlers=[_console, _file],
 )
 log = logging.getLogger("ControlDesk")
+
+# ── LGPD: redige PII dos logs e injeta dependências no módulo de conformidade ──
+for _h in (_console, _file):
+    _h.addFilter(lgpd.RedactingFilter())
+lgpd.configurar(executar_query, executar_comando, config=CFG, logger=log)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1326,7 +1347,7 @@ def parar_scheduler():
 # ══════════════════════════════════════════════════════════════════════
 
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Query, status
+    from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
     from fastapi.responses import Response
@@ -1354,6 +1375,12 @@ try:
             raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
         return payload
 
+    def _client_ip(request: Request) -> Optional[str]:
+        try:
+            return request.client.host if request and request.client else None
+        except Exception:
+            return None
+
     class FeriadoIn(BaseModel):
         data:            str
         nome:            str
@@ -1364,6 +1391,16 @@ try:
         pausar_discagem: bool = True
         pacing_especial: Optional[float] = None
         observacao:      Optional[str] = None
+
+    class BaseLegalIn(BaseModel):
+        campanha:   str
+        finalidade: str
+        base_legal: str
+        observacao: Optional[str] = None
+
+    class TitularReq(BaseModel):
+        cpf:            str
+        justificativa: Optional[str] = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -1431,7 +1468,8 @@ try:
 
     # ── Mailing
     @app.get("/mailing/top", tags=["Mailing"], dependencies=[Depends(_verificar_token)])
-    def top_mailing(n: int = Query(100), campanha_id: Optional[str] = Query(None)):
+    def top_mailing(request: Request, n: int = Query(100), campanha_id: Optional[str] = Query(None),
+                    desmascarar: bool = Query(False), payload: dict = Depends(_verificar_token)):
         sql = "SELECT * FROM mailing_scored"
         params = {}
         if campanha_id:
@@ -1439,7 +1477,17 @@ try:
             params["cid"] = campanha_id
         sql += " ORDER BY score_discagem DESC LIMIT :n"
         params["n"] = n
-        return executar_query(sql, params)
+        rows = executar_query(sql, params)
+        # LGPD: PII mascarada por padrão; exposição em claro só p/ admin e com registro de acesso.
+        if desmascarar:
+            if payload.get("role") != "admin":
+                raise HTTPException(status_code=403, detail="Apenas administradores podem ver dados sem máscara")
+            lgpd.registrar_acesso(
+                payload.get("sub", "API"), "mailing_top_desmascarado",
+                f"mailing_scored/{campanha_id or 'ALL'}", ip=_client_ip(request),
+            )
+            return rows
+        return lgpd.mascarar_registros(rows)
 
     @app.post("/mailing/processar", tags=["Mailing"], dependencies=[Depends(_verificar_token)])
     def processar_mailing():
@@ -1521,6 +1569,64 @@ try:
     @app.get("/campanhas/config", tags=["Campanhas"], dependencies=[Depends(_verificar_token)])
     def config_campanhas():
         return executar_query("SELECT * FROM campaign_config WHERE ativo = TRUE ORDER BY campanha_nome")
+
+    # ── LGPD (Lei nº 13.709/2018)
+    @app.get("/lgpd/titular/confirmacao", tags=["LGPD"], dependencies=[Depends(_verificar_token)])
+    def lgpd_confirmar(cpf: str = Query(...), payload: dict = Depends(_verificar_token)):
+        if not lgpd.validar_cpf(cpf):
+            raise HTTPException(status_code=400, detail="CPF inválido")
+        return lgpd.confirmar_tratamento(cpf, usuario=payload.get("sub", "API"))
+
+    @app.get("/lgpd/titular/dados", tags=["LGPD"], dependencies=[Depends(_requer_admin)])
+    def lgpd_exportar(cpf: str = Query(...), payload: dict = Depends(_verificar_token)):
+        if not lgpd.validar_cpf(cpf):
+            raise HTTPException(status_code=400, detail="CPF inválido")
+        return lgpd.exportar_dados(cpf, usuario=payload.get("sub", "API"))
+
+    @app.post("/lgpd/titular/anonimizar", tags=["LGPD"], dependencies=[Depends(_requer_admin)])
+    def lgpd_anonimizar(body: TitularReq, payload: dict = Depends(_verificar_token)):
+        if not lgpd.validar_cpf(body.cpf):
+            raise HTTPException(status_code=400, detail="CPF inválido")
+        usuario = payload.get("sub", "API")
+        protocolo = lgpd.abrir_requisicao("anonimizacao", body.cpf, solicitante=usuario, observacao=body.justificativa)
+        resultado = lgpd.anonimizar_titular(body.cpf, usuario=usuario)
+        lgpd.concluir_requisicao(protocolo)
+        return {"protocolo": protocolo, **resultado}
+
+    @app.post("/lgpd/titular/eliminar", tags=["LGPD"], dependencies=[Depends(_requer_admin)])
+    def lgpd_eliminar(body: TitularReq, payload: dict = Depends(_verificar_token)):
+        if not lgpd.validar_cpf(body.cpf):
+            raise HTTPException(status_code=400, detail="CPF inválido")
+        usuario = payload.get("sub", "API")
+        protocolo = lgpd.abrir_requisicao("eliminacao", body.cpf, solicitante=usuario, observacao=body.justificativa)
+        resultado = lgpd.eliminar_titular(body.cpf, usuario=usuario)
+        lgpd.concluir_requisicao(protocolo)
+        return {"protocolo": protocolo, **resultado}
+
+    @app.get("/lgpd/base-legal", tags=["LGPD"], dependencies=[Depends(_verificar_token)])
+    def lgpd_listar_base(campanha: Optional[str] = Query(None)):
+        return lgpd.listar_bases_legais(campanha)
+
+    @app.post("/lgpd/base-legal", tags=["LGPD"], dependencies=[Depends(_requer_admin)])
+    def lgpd_registrar_base(body: BaseLegalIn, payload: dict = Depends(_verificar_token)):
+        if body.base_legal not in lgpd.BASES_LEGAIS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"base_legal inválida. Use uma de: {sorted(lgpd.BASES_LEGAIS)}",
+            )
+        lgpd.registrar_base_legal(
+            body.campanha, body.finalidade, body.base_legal,
+            observacao=body.observacao, criado_por=payload.get("sub", "API"),
+        )
+        return {"message": "Base legal registrada"}
+
+    @app.get("/lgpd/acessos", tags=["LGPD"], dependencies=[Depends(_requer_admin)])
+    def lgpd_acessos(limite: int = Query(100)):
+        return executar_query("SELECT * FROM lgpd_acesso_log ORDER BY ts DESC LIMIT :l", {"l": limite})
+
+    @app.post("/lgpd/retencao/aplicar", tags=["LGPD"], dependencies=[Depends(_requer_admin)])
+    def lgpd_retencao(dias: Optional[int] = Query(None), payload: dict = Depends(_verificar_token)):
+        return lgpd.aplicar_retencao(dias=dias, usuario=payload.get("sub", "API"))
 
     FASTAPI_DISPONIVEL = True
 
