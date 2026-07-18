@@ -17,9 +17,9 @@ import json
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+from . import alo_store
 from .alo_analyzer import ANALISADOR, AnaliseResultado, Ligacao, Turno
 from .clients import OlosClient
-from .db import engine, executar_comando, executar_query
 from .logging_setup import get_logger
 
 log = get_logger("alo_service")
@@ -96,106 +96,37 @@ def mapear_ligacao(raw: dict) -> tuple[str, Ligacao]:
     return call_id, lig
 
 
-# ── Persistência ────────────────────────────────────────────────────────────
-_DDL = """
-CREATE TABLE IF NOT EXISTS alo_analises (
-    id                    BIGSERIAL PRIMARY KEY,
-    call_id               TEXT,
-    numero_chamado        TEXT,
-    operadora             TEXT,
-    data_ligacao          TEXT,
-    houve_alo             BOOLEAN,
-    classificacao         TEXT,
-    grau_confianca        INTEGER,
-    quem_desligou         TEXT,
-    houve_atraso          BOOLEAN,
-    tempo_atraso_seg      NUMERIC,
-    atraso_prejudicou     TEXT,
-    operadora_entregou    TEXT,
-    indicios_falha        TEXT,
-    prob_falha_operadora  INTEGER,
-    prob_falha_discador   INTEGER,
-    prob_falha_agente     INTEGER,
-    score_final           INTEGER,
-    falso_positivo_alo    BOOLEAN,
-    falso_negativo_alo    BOOLEAN,
-    justificativa         TEXT,
-    recomendacoes         TEXT,
-    origem                TEXT,
-    resultado             JSONB,
-    analisado_em          TIMESTAMP DEFAULT NOW()
-)
-"""
-
-_tabela_pronta = False
-
-
-def _garantir_tabela() -> bool:
-    global _tabela_pronta
-    if engine is None:
-        return False
-    if _tabela_pronta:
-        return True
-    try:
-        executar_comando(_DDL)
-        _tabela_pronta = True
-        return True
-    except Exception as e:
-        log.error(f"Não foi possível criar 'alo_analises': {e}")
-        return False
+# ── Persistência (delega ao alo_store: Postgres ou SQLite) ──────────────────
+def _row(call_id: str, lig: Ligacao, r: AnaliseResultado) -> dict:
+    return {
+        "call_id": call_id,
+        "numero_chamado": lig.numero_chamado,
+        "operadora": lig.operadora,
+        "data_ligacao": lig.data,
+        "houve_alo": r.houve_alo,
+        "classificacao": r.classificacao,
+        "grau_confianca": r.grau_confianca,
+        "quem_desligou": r.quem_desligou,
+        "houve_atraso": r.houve_atraso,
+        "tempo_atraso_seg": r.tempo_atraso_seg,
+        "atraso_prejudicou": r.atraso_prejudicou,
+        "operadora_entregou": r.operadora_entregou,
+        "indicios_falha": ", ".join(r.indicios_falha),
+        "prob_falha_operadora": r.prob_falha_operadora,
+        "prob_falha_discador": r.prob_falha_discador,
+        "prob_falha_agente": r.prob_falha_agente,
+        "score_final": r.score_final,
+        "falso_positivo_alo": r.falso_positivo_alo,
+        "falso_negativo_alo": r.falso_negativo_alo,
+        "justificativa": r.justificativa,
+        "recomendacoes": " | ".join(r.recomendacoes),
+        "origem": r.origem,
+        "resultado": json.dumps(r.to_dict(), ensure_ascii=False),
+    }
 
 
 def _persistir(call_id: str, lig: Ligacao, r: AnaliseResultado) -> bool:
-    if not _garantir_tabela():
-        return False
-    sql = """
-        INSERT INTO alo_analises (
-            call_id, numero_chamado, operadora, data_ligacao, houve_alo,
-            classificacao, grau_confianca, quem_desligou, houve_atraso,
-            tempo_atraso_seg, atraso_prejudicou, operadora_entregou,
-            indicios_falha, prob_falha_operadora, prob_falha_discador,
-            prob_falha_agente, score_final, falso_positivo_alo,
-            falso_negativo_alo, justificativa, recomendacoes, origem, resultado
-        ) VALUES (
-            :call_id, :numero_chamado, :operadora, :data_ligacao, :houve_alo,
-            :classificacao, :grau_confianca, :quem_desligou, :houve_atraso,
-            :tempo_atraso_seg, :atraso_prejudicou, :operadora_entregou,
-            :indicios_falha, :prob_falha_operadora, :prob_falha_discador,
-            :prob_falha_agente, :score_final, :falso_positivo_alo,
-            :falso_negativo_alo, :justificativa, :recomendacoes, :origem,
-            CAST(:resultado AS JSONB)
-        )
-    """
-    try:
-        executar_comando(sql, {
-            "call_id": call_id,
-            "numero_chamado": lig.numero_chamado,
-            "operadora": lig.operadora,
-            "data_ligacao": lig.data,
-            "houve_alo": r.houve_alo,
-            "classificacao": r.classificacao,
-            "grau_confianca": r.grau_confianca,
-            "quem_desligou": r.quem_desligou,
-            "houve_atraso": r.houve_atraso,
-            "tempo_atraso_seg": r.tempo_atraso_seg,
-            "atraso_prejudicou": r.atraso_prejudicou,
-            "operadora_entregou": r.operadora_entregou,
-            "indicios_falha": ", ".join(r.indicios_falha),
-            "prob_falha_operadora": r.prob_falha_operadora,
-            "prob_falha_discador": r.prob_falha_discador,
-            "prob_falha_agente": r.prob_falha_agente,
-            "score_final": r.score_final,
-            "falso_positivo_alo": r.falso_positivo_alo,
-            "falso_negativo_alo": r.falso_negativo_alo,
-            "justificativa": r.justificativa,
-            "recomendacoes": " | ".join(r.recomendacoes),
-            "origem": r.origem,
-            "resultado": json.dumps(r.to_dict(), ensure_ascii=False),
-        })
-        return True
-    except Exception as e:
-        log.error(f"Falha ao persistir análise ALO (call_id={call_id}): {e}")
-        return False
+    return alo_store.persistir(_row(call_id, lig, r))
 
 
 # ── Serviço ─────────────────────────────────────────────────────────────────
@@ -222,32 +153,22 @@ class AloService:
         return out
 
     @staticmethod
-    def processar_lote(
-        desde: Optional[str] = None,
-        limite: int = 200,
-        persistir: bool = True,
-        usar_ia: Optional[bool] = None,
+    def processar_payload(
+        chamadas: list, persistir: bool = True, usar_ia: Optional[bool] = None
     ) -> dict:
-        """Analisa em lote as chamadas recentes do discador.
+        """Analisa uma lista de registros de chamada já em memória.
 
-        ``desde`` no formato ISO (``YYYY-MM-DD``); padrão = ontem.
+        Cada item é um dict de CDR/transcrição (mesmo formato do Olos). Use para
+        testar com exportações reais sem depender do discador em tempo real.
         """
-        if desde is None:
-            desde = (date.today() - timedelta(days=1)).isoformat()
-
-        chamadas = OlosClient.get_calls_para_alo(desde=desde, limite=limite)
         resumo = {
-            "processadas": 0,
-            "persistidas": 0,
-            "alo": 0,
-            "nao_alo": 0,
-            "falsos_positivos": 0,
-            "falsos_negativos": 0,
-            "por_classificacao": {},
-            "desde": desde,
-            "ts": datetime.utcnow().isoformat(),
+            "processadas": 0, "persistidas": 0, "alo": 0, "nao_alo": 0,
+            "com_atraso": 0, "falsos_positivos": 0, "falsos_negativos": 0,
+            "score_medio": 0.0, "por_classificacao": {},
+            "backend": alo_store.backend(), "ts": datetime.utcnow().isoformat(),
         }
-        for raw in chamadas:
+        soma_score = 0
+        for raw in chamadas or []:
             if not isinstance(raw, dict):
                 continue
             cid, lig = mapear_ligacao(raw)
@@ -255,18 +176,40 @@ class AloService:
             resumo["processadas"] += 1
             resumo["alo"] += int(r.houve_alo)
             resumo["nao_alo"] += int(not r.houve_alo)
+            resumo["com_atraso"] += int(r.houve_atraso)
             resumo["falsos_positivos"] += int(r.falso_positivo_alo)
             resumo["falsos_negativos"] += int(r.falso_negativo_alo)
             resumo["por_classificacao"][r.classificacao] = (
                 resumo["por_classificacao"].get(r.classificacao, 0) + 1
             )
+            soma_score += r.score_final
             if persistir and _persistir(cid, lig, r):
                 resumo["persistidas"] += 1
-
+        if resumo["processadas"]:
+            resumo["score_medio"] = round(soma_score / resumo["processadas"], 1)
         log.info(
-            f"ALO lote: {resumo['processadas']} chamadas "
-            f"({resumo['alo']} ALO / {resumo['nao_alo']} NÃO ALO) desde {desde}"
+            f"ALO: {resumo['processadas']} chamadas "
+            f"({resumo['alo']} ALO / {resumo['nao_alo']} NÃO ALO), "
+            f"{resumo['persistidas']} persistidas (backend={resumo['backend']})"
         )
+        return resumo
+
+    @staticmethod
+    def processar_lote(
+        desde: Optional[str] = None,
+        limite: int = 200,
+        persistir: bool = True,
+        usar_ia: Optional[bool] = None,
+    ) -> dict:
+        """Analisa em lote as chamadas recentes do discador (Olos).
+
+        ``desde`` no formato ISO (``YYYY-MM-DD``); padrão = ontem.
+        """
+        if desde is None:
+            desde = (date.today() - timedelta(days=1)).isoformat()
+        chamadas = OlosClient.get_calls_para_alo(desde=desde, limite=limite)
+        resumo = AloService.processar_payload(chamadas, persistir=persistir, usar_ia=usar_ia)
+        resumo["desde"] = desde
         return resumo
 
     @staticmethod
@@ -275,62 +218,9 @@ class AloService:
         classificacao: Optional[str] = None,
         operadora: Optional[str] = None,
     ) -> list[dict]:
-        if engine is None:
-            return []
-        if not _garantir_tabela():
-            return []
-        sql = "SELECT * FROM alo_analises WHERE 1=1"
-        params: dict = {}
-        if classificacao:
-            sql += " AND classificacao = :cls"
-            params["cls"] = classificacao
-        if operadora:
-            sql += " AND operadora = :op"
-            params["op"] = operadora
-        sql += " ORDER BY analisado_em DESC LIMIT :lim"
-        params["lim"] = limite
-        try:
-            return executar_query(sql, params)
-        except Exception as e:
-            log.error(f"Erro ao ler histórico ALO: {e}")
-            return []
+        return alo_store.historico(limite=limite, classificacao=classificacao, operadora=operadora)
 
     @staticmethod
     def estatisticas(dias: int = 1) -> dict:
         """Agrega qualidade das ligações por classificação e por operadora."""
-        if engine is None or not _garantir_tabela():
-            return {"disponivel": False, "motivo": "banco indisponível"}
-        try:
-            total = executar_query(
-                "SELECT COUNT(*) AS n, "
-                "AVG(score_final) AS score_medio, "
-                "SUM(CASE WHEN houve_alo THEN 1 ELSE 0 END) AS alo, "
-                "SUM(CASE WHEN houve_atraso THEN 1 ELSE 0 END) AS com_atraso, "
-                "SUM(CASE WHEN falso_positivo_alo THEN 1 ELSE 0 END) AS falsos_positivos, "
-                "SUM(CASE WHEN falso_negativo_alo THEN 1 ELSE 0 END) AS falsos_negativos "
-                "FROM alo_analises WHERE analisado_em >= NOW() - make_interval(days => :d)",
-                {"d": dias},
-            )
-            por_cls = executar_query(
-                "SELECT classificacao, COUNT(*) AS n, ROUND(AVG(score_final)) AS score_medio "
-                "FROM alo_analises WHERE analisado_em >= NOW() - make_interval(days => :d) "
-                "GROUP BY classificacao ORDER BY n DESC",
-                {"d": dias},
-            )
-            por_op = executar_query(
-                "SELECT operadora, COUNT(*) AS n, ROUND(AVG(score_final)) AS score_medio, "
-                "SUM(CASE WHEN operadora_entregou <> 'SIM' THEN 1 ELSE 0 END) AS entregas_ruins "
-                "FROM alo_analises WHERE analisado_em >= NOW() - make_interval(days => :d) "
-                "GROUP BY operadora ORDER BY n DESC",
-                {"d": dias},
-            )
-            return {
-                "disponivel": True,
-                "dias": dias,
-                "resumo": total[0] if total else {},
-                "por_classificacao": por_cls,
-                "por_operadora": por_op,
-            }
-        except Exception as e:
-            log.error(f"Erro nas estatísticas ALO: {e}")
-            return {"disponivel": False, "motivo": str(e)}
+        return alo_store.estatisticas(dias=dias)

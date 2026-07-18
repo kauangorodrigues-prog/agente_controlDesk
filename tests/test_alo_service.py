@@ -68,6 +68,35 @@ def test_processar_lote_com_mock():
     assert resumo["por_classificacao"].get("CAIXA POSTAL") == 1
 
 
+def test_persistencia_sqlite_roundtrip():
+    # Força um SQLite temporário e valida gravação + estatísticas.
+    import tempfile
+    from control_desk import alo_store
+
+    tmp = os.path.join(tempfile.mkdtemp(), "alo_test.db")
+    alo_store._SQLITE_PATH = tmp
+    alo_store._pronto = False
+    assert alo_store.backend() == "sqlite"
+
+    chamadas = [
+        {"id": "t1", "carrier": "Claro", "amd_result": "Humano",
+         "turns": [{"speaker": "cliente", "text": "Alô", "start": 1.0}]},
+        {"id": "t2", "carrier": "Vivo",
+         "transcription": [{"speaker": "ura", "text": "Deixe sua mensagem após o sinal"}]},
+    ]
+    resumo = AloService.processar_payload(chamadas, persistir=True, usar_ia=False)
+    assert resumo["processadas"] == 2
+    assert resumo["persistidas"] == 2
+
+    hist = AloService.historico(limite=10)
+    assert len(hist) == 2
+
+    est = AloService.estatisticas(dias=1)
+    assert est["disponivel"] is True
+    assert est["backend"] == "sqlite"
+    assert int(est["resumo"]["n"]) == 2
+
+
 def test_persistir_sem_banco_nao_quebra():
     # engine costuma ser None neste ambiente — persistência deve degradar em silêncio.
     from control_desk.alo_analyzer import ANALISADOR, Ligacao, Turno

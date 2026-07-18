@@ -260,6 +260,16 @@ try:
         usar_ia = payload.pop("usar_ia", None)
         return ANALISADOR.analisar_dict(payload, usar_ia=usar_ia)
 
+    class AloLoteIn(BaseModel):
+        chamadas: list[dict] = []
+        persistir: bool = True
+        usar_ia: Optional[bool] = None
+
+    @app.post("/alo/lote", tags=["ALO"], dependencies=[Depends(_verificar_token)])
+    def processar_alo_lote(body: AloLoteIn):
+        from .alo_service import AloService
+        return AloService.processar_payload(body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia)
+
     @app.get("/alo/call/{call_id}", tags=["ALO"], dependencies=[Depends(_verificar_token)])
     def analisar_call(call_id: str, persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None)):
         from .alo_service import AloService

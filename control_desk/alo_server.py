@@ -27,13 +27,22 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
 
+    from . import alo_store
     from .alo_analyzer import ANALISADOR
     from .alo_service import AloService
+
+    def _backend_persistencia() -> str:
+        return alo_store.backend()
 
     class TurnoIn(BaseModel):
         falante: str = "cliente"
         texto: str = ""
         inicio_seg: Optional[float] = None
+
+    class LoteIn(BaseModel):
+        chamadas: list[dict] = []
+        persistir: bool = True
+        usar_ia: Optional[bool] = None
 
     class LigacaoIn(BaseModel):
         numero_chamado: str = ""
@@ -73,10 +82,12 @@ try:
             "status": "online",
             "modo": "IA (Claude)" if ia_ativa else "heurística offline",
             "modelo": CFG.ANTHROPIC_MODEL if ia_ativa else None,
+            "persistencia": _backend_persistencia(),
             "endpoints": [
-                "POST /alo/analisar",
-                "GET  /alo/call/{call_id}",
-                "POST /alo/processar",
+                "POST /alo/analisar        (uma ligação, resposta imediata)",
+                "POST /alo/lote            (lote de ligações no corpo, persiste)",
+                "GET  /alo/call/{call_id}  (puxa do discador Olos)",
+                "POST /alo/processar       (puxa lote recente do Olos)",
                 "GET  /alo/historico",
                 "GET  /alo/estatisticas",
                 "GET  /docs",
@@ -92,6 +103,12 @@ try:
         payload = body.dict()
         usar_ia = payload.pop("usar_ia", None)
         return ANALISADOR.analisar_dict(payload, usar_ia=usar_ia)
+
+    @app.post("/alo/lote", tags=["ALO"])
+    def processar_lote_payload(body: LoteIn):
+        return AloService.processar_payload(
+            body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia
+        )
 
     @app.get("/alo/call/{call_id}", tags=["ALO"])
     def analisar_call(call_id: str, persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None)):

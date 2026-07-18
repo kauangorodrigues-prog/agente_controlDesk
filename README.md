@@ -97,10 +97,27 @@ Todos autenticados via JWT (`Authorization: Bearer <token>`), tag **ALO** em
 | Método | Rota | Descrição |
 |---|---|---|
 | `POST` | `/alo/analisar` | Analisa uma ligação enviada no corpo (metadados + `transcricao` ou `turnos`). |
+| `POST` | `/alo/lote` | Analisa um lote de ligações enviado no corpo (`{"chamadas":[...]}`) e persiste. Ideal para testar com exportações reais de CDR/transcrição. |
 | `GET`  | `/alo/call/{call_id}` | Puxa a chamada do Olos, analisa e persiste. |
-| `POST` | `/alo/processar` | Processa em lote as chamadas recentes (`?desde=YYYY-MM-DD&limite=200`). |
+| `POST` | `/alo/processar` | Processa em lote as chamadas recentes do Olos (`?desde=YYYY-MM-DD&limite=200`). |
 | `GET`  | `/alo/historico` | Últimas análises (`?classificacao=&operadora=&limite=`). |
 | `GET`  | `/alo/estatisticas` | Agregados por classificação/operadora (`?dias=1`). |
+
+**Persistência:** grava no Postgres do Control Desk quando configurado; sem ele,
+cai automaticamente para um SQLite local (`ALO_SQLITE_PATH`, padrão
+`data/alo_analises.db`), deixando o robô 100% funcional (com histórico e
+estatísticas) sem nenhuma infraestrutura externa.
+
+### Robô standalone (porta 5501)
+
+Para rodar só o analisador, sem o restante da plataforma:
+
+```bash
+python main.py alo          # porta 5501 (ou: python main.py alo 5501)
+```
+
+Sobe um FastAPI leve com os endpoints acima (sem JWT, sem scheduler),
+documentação em `http://localhost:5501/docs`.
 
 ```bash
 curl -X POST http://localhost:8000/alo/analisar \
