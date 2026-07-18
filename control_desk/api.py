@@ -89,6 +89,12 @@ try:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         log.info("=== Agente IA Control Desk iniciando (modo API) ===")
+        if CFG.JWT_SECRET_KEY == "TROQUE_EM_PRODUCAO":
+            msg = "JWT_SECRET_KEY está no valor padrão — defina uma chave forte antes de expor a API."
+            if CFG.AMBIENTE == "production":
+                log.critical(msg)
+                raise RuntimeError(msg)
+            log.warning(msg)
         iniciar_scheduler()
         yield
         parar_scheduler()
@@ -265,14 +271,21 @@ try:
         persistir: bool = True
         usar_ia: Optional[bool] = None
 
+    _ALO_MAX_LOTE = int(CFG.__dict__.get("ALO_MAX_LOTE", 0) or 1000)
+    _ALO_CALL_ID_RE = __import__("re").compile(r"^[A-Za-z0-9_:-]{1,128}$")
+
     @app.post("/alo/lote", tags=["ALO"], dependencies=[Depends(_verificar_token)])
     def processar_alo_lote(body: AloLoteIn):
         from .alo_service import AloService
+        if len(body.chamadas) > _ALO_MAX_LOTE:
+            raise HTTPException(status_code=413, detail=f"Lote excede o máximo de {_ALO_MAX_LOTE} ligações.")
         return AloService.processar_payload(body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia)
 
     @app.get("/alo/call/{call_id}", tags=["ALO"], dependencies=[Depends(_verificar_token)])
     def analisar_call(call_id: str, persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None)):
         from .alo_service import AloService
+        if not _ALO_CALL_ID_RE.match(call_id):
+            raise HTTPException(status_code=400, detail="call_id inválido.")
         return AloService.analisar_call(call_id, persistir=persistir, usar_ia=usar_ia)
 
     @app.post("/alo/processar", tags=["ALO"], dependencies=[Depends(_verificar_token)])

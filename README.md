@@ -113,11 +113,23 @@ estatísticas) sem nenhuma infraestrutura externa.
 Para rodar só o analisador, sem o restante da plataforma:
 
 ```bash
+export ROBO_ALO_API_KEY="$(openssl rand -base64 32)"   # recomendado
 python main.py alo          # porta 5501 (ou: python main.py alo 5501)
 ```
 
-Sobe um FastAPI leve com os endpoints acima (sem JWT, sem scheduler),
-documentação em `http://localhost:5501/docs`.
+Sobe um FastAPI leve com os endpoints acima (sem scheduler), documentação em
+`http://localhost:5501/docs`. **Seguro para rodar na rede:** as rotas `/alo/*`
+exigem o header `X-API-Key` (chave de `ROBO_ALO_API_KEY`; se não definida, uma
+chave forte é gerada e mostrada no log — nunca sobe aberto), com CORS restrito,
+rate-limit por IP, limite de tamanho de lote, validação de `call_id`, cabeçalhos
+de segurança e HTTPS opcional (`ROBO_ALO_TLS_CERT`/`KEY`). Detalhes e checklist
+de produção em [`SECURITY.md`](SECURITY.md).
+
+```bash
+curl -X POST http://localhost:5501/alo/analisar \
+  -H "X-API-Key: $ROBO_ALO_API_KEY" -H "Content-Type: application/json" \
+  -d '{"operadora":"Claro","amd":"Humano","turnos":[{"falante":"cliente","texto":"Alô","inicio_seg":1.1}]}'
+```
 
 ```bash
 curl -X POST http://localhost:8000/alo/analisar \

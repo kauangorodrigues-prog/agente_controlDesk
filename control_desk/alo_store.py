@@ -195,7 +195,8 @@ def estatisticas(dias: int = 1) -> dict:
         }
     except Exception as e:
         log.error(f"Erro nas estatísticas ALO: {e}")
-        return {"disponivel": False, "backend": backend(), "motivo": str(e)}
+        return {"disponivel": False, "backend": backend(),
+                "motivo": "erro ao consultar estatísticas"}
 
 
 def _sqlite_query(sql: str, params: dict | None = None) -> list[dict]:
