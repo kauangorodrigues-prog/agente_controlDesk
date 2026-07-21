@@ -82,6 +82,7 @@ try:
         chamadas: list[dict] = []
         persistir: bool = True
         usar_ia: Optional[bool] = None
+        modo: Optional[str] = None  # heuristica | ia | hibrido
 
     class LigacaoIn(BaseModel):
         numero_chamado: str = ""
@@ -103,6 +104,7 @@ try:
         transcricao: str = ""
         turnos: list[TurnoIn] = []
         usar_ia: Optional[bool] = None
+        modo: Optional[str] = None  # heuristica | ia | hibrido
 
     app = FastAPI(
         title="Robô Analisador de Ligações ALO / NÃO ALO",
@@ -152,11 +154,14 @@ try:
     # ── Rotas públicas (sem PII) ─────────────────────────────────────────────
     @app.get("/", tags=["Robô"])
     def raiz():
-        ia_ativa = bool(CFG.ALO_USAR_IA and CFG.ANTHROPIC_API_KEY)
+        from .alo_analyzer import _ia_disponivel
         return {
             "robo": "Analisador de Ligações ALO / NÃO ALO",
             "status": "online",
-            "modo": "IA (Claude)" if ia_ativa else "heurística offline",
+            "modo": CFG.ALO_MODO,
+            "modelo_ia": CFG.ANTHROPIC_MODEL,
+            "ia_disponivel": _ia_disponivel(),
+            "hibrido_limiar": CFG.ALO_HIBRIDO_LIMIAR,
             "autenticacao": "obrigatória — header X-API-Key nas rotas /alo/*",
             "persistencia": _backend_persistencia(),
             "endpoints": [
@@ -179,7 +184,8 @@ try:
     def analisar_ligacao(body: LigacaoIn):
         payload = body.dict()
         usar_ia = payload.pop("usar_ia", None)
-        return ANALISADOR.analisar_dict(payload, usar_ia=usar_ia)
+        modo = payload.pop("modo", None)
+        return ANALISADOR.analisar_dict(payload, modo=modo, usar_ia=usar_ia)
 
     @app.post("/alo/lote", tags=["ALO"], dependencies=_AUTH)
     def processar_lote_payload(body: LoteIn):
@@ -189,21 +195,27 @@ try:
                 detail=f"Lote com {len(body.chamadas)} ligações excede o máximo de {_MAX_LOTE}.",
             )
         return AloService.processar_payload(
-            body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia
+            body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia, modo=body.modo
         )
 
     @app.get("/alo/call/{call_id}", tags=["ALO"], dependencies=_AUTH)
-    def analisar_call(call_id: str, persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None)):
+    def analisar_call(
+        call_id: str, persistir: bool = Query(True),
+        usar_ia: Optional[bool] = Query(None), modo: Optional[str] = Query(None),
+    ):
         if not _CALL_ID_RE.match(call_id):
             raise HTTPException(status_code=400, detail="call_id inválido.")
-        return AloService.analisar_call(call_id, persistir=persistir, usar_ia=usar_ia)
+        return AloService.analisar_call(call_id, persistir=persistir, usar_ia=usar_ia, modo=modo)
 
     @app.post("/alo/processar", tags=["ALO"], dependencies=_AUTH)
     def processar_alo(
         desde: Optional[str] = Query(None), limite: int = Query(200, ge=1, le=5000),
         persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None),
+        modo: Optional[str] = Query(None),
     ):
-        return AloService.processar_lote(desde=desde, limite=limite, persistir=persistir, usar_ia=usar_ia)
+        return AloService.processar_lote(
+            desde=desde, limite=limite, persistir=persistir, usar_ia=usar_ia, modo=modo
+        )
 
     @app.get("/alo/historico", tags=["ALO"], dependencies=_AUTH)
     def historico_alo(
@@ -253,6 +265,7 @@ def run(port: Optional[int] = None, host: Optional[str] = None) -> None:
 
     porta = port or porta_padrao()
     host = host or os.getenv("ROBO_ALO_HOST", "0.0.0.0")
+    workers = max(1, int(os.getenv("ROBO_ALO_WORKERS", "1")))
     ssl_kwargs: dict = {}
     cert, key = os.getenv("ROBO_ALO_TLS_CERT"), os.getenv("ROBO_ALO_TLS_KEY")
     if cert and key:
@@ -261,11 +274,21 @@ def run(port: Optional[int] = None, host: Optional[str] = None) -> None:
     else:
         esquema = "http"
 
+    # Múltiplos workers exigem chave fixa (cada processo geraria uma chave diferente).
+    if workers > 1 and _API_KEY_GERADA:
+        log.error("ROBO_ALO_WORKERS>1 exige ROBO_ALO_API_KEY fixa no ambiente — usando 1 worker.")
+        workers = 1
+
     _log_seguranca()
-    log.info(f"🤖 Robô Analisador ALO ouvindo em {esquema}://{host}:{porta} (docs em /docs)")
+    log.info(f"🤖 Robô Analisador ALO ouvindo em {esquema}://{host}:{porta} "
+             f"({workers} worker(s), docs em /docs)")
     if esquema == "http" and host not in ("127.0.0.1", "localhost"):
         log.warning("Servindo em HTTP na rede — use ROBO_ALO_TLS_CERT/KEY ou um proxy HTTPS em produção.")
-    uvicorn.run(app, host=host, port=porta, **ssl_kwargs)
+
+    if workers > 1:
+        uvicorn.run("control_desk.alo_server:app", host=host, port=porta, workers=workers, **ssl_kwargs)
+    else:
+        uvicorn.run(app, host=host, port=porta, **ssl_kwargs)
 
 
 if __name__ == "__main__":

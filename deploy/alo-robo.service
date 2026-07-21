@@ -1,0 +1,33 @@
+# systemd unit para rodar o robô ALO em servidor bare-metal (sem Docker).
+#
+# Instalação:
+#   sudo cp deploy/alo-robo.service /etc/systemd/system/
+#   sudo mkdir -p /etc/alo-robo && sudo cp .env /etc/alo-robo/env   # variáveis (ver .env.docker.example)
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now alo-robo
+#   systemctl status alo-robo
+#
+# Ajuste WorkingDirectory/User/ExecStart conforme onde o repositório foi clonado.
+
+[Unit]
+Description=Robô Analisador de Ligações ALO / NÃO ALO
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alo
+Group=alo
+WorkingDirectory=/opt/agente_controlDesk
+EnvironmentFile=/etc/alo-robo/env
+ExecStart=/opt/agente_controlDesk/.venv/bin/python main.py alo
+Restart=always
+RestartSec=5
+# Endurecimento básico
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

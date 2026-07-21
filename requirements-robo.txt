@@ -1,0 +1,14 @@
+# Dependências mínimas do robô Analisador de Ligações ALO / NÃO ALO
+# (não inclui pandas/scikit-learn/streamlit do restante do Control Desk).
+fastapi
+uvicorn[standard]
+pydantic
+requests
+python-dotenv
+SQLAlchemy>=2.0
+
+# Persistência em Postgres (produção). Sem o driver, o robô usa SQLite local.
+psycopg2-binary
+
+# Modo IA / híbrido (opcional). Sem o pacote/chave, roda na heurística offline.
+anthropic

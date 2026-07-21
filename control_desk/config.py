@@ -37,6 +37,11 @@ class Config:
         # ── Analisador de ligações ALO / NÃO ALO (IA) ────────
         self.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
         self.ANTHROPIC_MODEL   = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+        # Modo de análise: heuristica | ia | hibrido (padrão).
+        self.ALO_MODO          = os.getenv("ALO_MODO", "hibrido").strip().lower()
+        # No híbrido, ligações com confiança abaixo deste limiar vão para a IA.
+        self.ALO_HIBRIDO_LIMIAR = int(os.getenv("ALO_HIBRIDO_LIMIAR", "80"))
+        # Compat.: mantido para exibição; o modo é a fonte de verdade.
         self.ALO_USAR_IA       = os.getenv("ALO_USAR_IA", "true").lower() == "true"
 
         # ── JWT (API) ─────────────────────────────────────────

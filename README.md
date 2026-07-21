@@ -51,14 +51,20 @@ prejuízo, entrega da operadora, indícios de falha, probabilidade de a falha se
 da operadora/discador/agente e evidências — além de métricas de tempo, score
 final e recomendações.
 
-Dois modos, com *fallback* transparente:
+Três modos (`ALO_MODO`), com *fallback* transparente:
 
-- **IA (Claude)** — quando o pacote `anthropic` está instalado e
-  `ANTHROPIC_API_KEY` está definida (`ALO_USAR_IA=true`, padrão). Usa
-  `claude-opus-4-8` com saída estruturada em JSON.
-- **Heurística offline** — regras sobre palavras-chave de ALO, marcadores de
-  não-ALO e metadados (CDR/SIP/AMD). É o *fallback* automático sem chave, sem
-  rede ou em caso de erro da API. Roda sem dependências externas.
+- **`hibrido`** (padrão) — heurística no volume todo e **IA só nas ligações
+  duvidosas** (confiança abaixo de `ALO_HIBRIDO_LIMIAR`). Melhor custo/precisão.
+- **`heuristica`** — só regras (rápido, offline, sem custo).
+- **`ia`** — sempre Claude (`claude-opus-4-8`, JSON estruturado), com *fallback*
+  heurístico em qualquer falha.
+
+Sem `ANTHROPIC_API_KEY` (ou sem o pacote `anthropic`), o híbrido roda 100% na
+heurística — a IA entra automaticamente quando a chave é configurada. Cada
+resposta traz `origem` (`heuristica`/`ia`) e `escalado_para_ia`.
+
+Para subir em produção (Docker/systemd, Postgres, HTTPS, multi-worker), veja
+[`DEPLOY.md`](DEPLOY.md).
 
 Uso via código:
 

@@ -52,6 +52,12 @@ CLASSIFICACOES = [
 QUEM_DESLIGOU = ["Cliente", "Operador", "Operadora", "Sistema", "Desconhecido"]
 NIVEIS_PREJUIZO = ["Nenhum", "Baixo", "Médio", "Alto", "Crítico"]
 ENTREGA = ["SIM", "PARCIALMENTE", "NÃO"]
+
+# Modos de análise.
+MODO_HEURISTICA = "heuristica"   # só regras (rápido, offline, sem custo)
+MODO_IA = "ia"                   # sempre Claude (com fallback heurístico)
+MODO_HIBRIDO = "hibrido"         # heurística no volume; IA só nas duvidosas
+MODOS = {MODO_HEURISTICA, MODO_IA, MODO_HIBRIDO}
 INDICIOS = [
     "Silêncio excessivo", "Ruído", "Eco", "Perda de áudio",
     "Cliente falando sozinho", "Operador entrou atrasado",
@@ -250,6 +256,7 @@ class AnaliseResultado:
     falso_positivo_alo: bool = False
     falso_negativo_alo: bool = False
     origem: str = "heuristica"  # "ia" | "heuristica"
+    escalado_para_ia: bool = False  # no modo híbrido, indica se a IA foi acionada
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -693,28 +700,83 @@ def _analisar_ia(lig: Ligacao) -> Optional[AnaliseResultado]:
     return r
 
 
+# ── Seleção de modo / híbrido ───────────────────────────────────────────────
+def _ia_disponivel() -> bool:
+    """IA utilizável? (chave configurada + pacote anthropic instalado)."""
+    if not CFG.ANTHROPIC_API_KEY:
+        return False
+    try:
+        import anthropic  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _resolver_modo(modo: Optional[str], usar_ia: Optional[bool]) -> str:
+    """Resolve o modo efetivo. ``modo`` tem prioridade; ``usar_ia`` mantém a
+    compatibilidade (True→ia, False→heurística); nada informado → CFG.ALO_MODO."""
+    if modo:
+        m = str(modo).strip().lower()
+        if m in MODOS:
+            return m
+    if usar_ia is True:
+        return MODO_IA
+    if usar_ia is False:
+        return MODO_HEURISTICA
+    m = str(getattr(CFG, "ALO_MODO", MODO_HIBRIDO)).strip().lower()
+    return m if m in MODOS else MODO_HIBRIDO
+
+
+def _deve_escalar(heur: AnaliseResultado) -> bool:
+    """No modo híbrido, decide se a ligação é 'duvidosa' e merece a IA."""
+    limiar = int(getattr(CFG, "ALO_HIBRIDO_LIMIAR", 80))
+    return heur.classificacao == OUTRO or heur.grau_confianca < limiar
+
+
 # ── API pública ─────────────────────────────────────────────────────────────
 class AnalisadorLigacao:
     """Fachada do analisador de ligações ALO / NÃO ALO."""
 
     @staticmethod
-    def analisar(lig: Ligacao, usar_ia: Optional[bool] = None) -> AnaliseResultado:
+    def analisar(
+        lig: Ligacao,
+        modo: Optional[str] = None,
+        usar_ia: Optional[bool] = None,
+    ) -> AnaliseResultado:
         """Analisa uma ligação e devolve o :class:`AnaliseResultado`.
 
-        ``usar_ia=None`` respeita a configuração ``ALO_USAR_IA``. Em qualquer
-        falha da IA (sem chave, sem rede, erro de API) cai automaticamente na
-        heurística offline.
+        ``modo`` ∈ {``heuristica``, ``ia``, ``hibrido``}; ``None`` respeita
+        ``CFG.ALO_MODO`` (padrão híbrido). No modo **híbrido** a heurística roda
+        sempre e a IA só é acionada quando o resultado é duvidoso (classificação
+        OUTRO ou confiança abaixo de ``ALO_HIBRIDO_LIMIAR``). Qualquer falha da
+        IA (sem chave, sem rede, erro de API) cai automaticamente na heurística.
         """
-        if usar_ia is None:
-            usar_ia = CFG.ALO_USAR_IA
-        if usar_ia:
+        m = _resolver_modo(modo, usar_ia)
+
+        if m == MODO_HEURISTICA:
+            return _analisar_heuristica(lig)
+
+        if m == MODO_IA:
             resultado = _analisar_ia(lig)
-            if resultado is not None:
-                return resultado
-        return _analisar_heuristica(lig)
+            return resultado if resultado is not None else _analisar_heuristica(lig)
+
+        # Híbrido: heurística primeiro; IA só nas duvidosas.
+        heur = _analisar_heuristica(lig)
+        if not _deve_escalar(heur) or not _ia_disponivel():
+            return heur
+        resultado = _analisar_ia(lig)
+        if resultado is not None:
+            resultado.escalado_para_ia = True
+            return resultado
+        heur.escalado_para_ia = True  # tentou a IA, mas ela falhou — mantém a heurística
+        return heur
 
     @staticmethod
-    def analisar_dict(payload: dict, usar_ia: Optional[bool] = None) -> dict:
+    def analisar_dict(
+        payload: dict,
+        modo: Optional[str] = None,
+        usar_ia: Optional[bool] = None,
+    ) -> dict:
         """Versão orientada a dict (útil em APIs). Aceita ``turnos`` como lista
         de dicts ``{falante, texto, inicio_seg}``."""
         turnos_raw = payload.pop("turnos", None) or []
@@ -729,7 +791,7 @@ class AnalisadorLigacao:
         campos = {f.name for f in Ligacao.__dataclass_fields__.values()}
         lig = Ligacao(**{k: v for k, v in payload.items() if k in campos})
         lig.turnos = turnos
-        return AnalisadorLigacao.analisar(lig, usar_ia=usar_ia).to_dict()
+        return AnalisadorLigacao.analisar(lig, modo=modo, usar_ia=usar_ia).to_dict()
 
 
 ANALISADOR = AnalisadorLigacao()

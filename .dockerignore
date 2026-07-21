@@ -1,0 +1,17 @@
+.git
+.gitignore
+web/
+tests/
+scripts/
+data/
+logs/
+*.md
+!README.md
+__pycache__/
+*.pyc
+.env
+.env.*
+.venv/
+venv/
+models/
+dashboard_app.py

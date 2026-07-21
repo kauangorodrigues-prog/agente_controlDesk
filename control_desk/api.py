@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -74,6 +75,7 @@ try:
         transcricao: str = ""
         turnos: list[TurnoIn] = []
         usar_ia: Optional[bool] = None
+        modo: Optional[str] = None
 
     class FeriadoIn(BaseModel):
         data: str
@@ -264,14 +266,16 @@ try:
         from .alo_analyzer import ANALISADOR
         payload = body.dict()
         usar_ia = payload.pop("usar_ia", None)
-        return ANALISADOR.analisar_dict(payload, usar_ia=usar_ia)
+        modo = payload.pop("modo", None)
+        return ANALISADOR.analisar_dict(payload, modo=modo, usar_ia=usar_ia)
 
     class AloLoteIn(BaseModel):
         chamadas: list[dict] = []
         persistir: bool = True
         usar_ia: Optional[bool] = None
+        modo: Optional[str] = None
 
-    _ALO_MAX_LOTE = int(CFG.__dict__.get("ALO_MAX_LOTE", 0) or 1000)
+    _ALO_MAX_LOTE = int(os.getenv("ALO_MAX_LOTE", "1000"))
     _ALO_CALL_ID_RE = __import__("re").compile(r"^[A-Za-z0-9_:-]{1,128}$")
 
     @app.post("/alo/lote", tags=["ALO"], dependencies=[Depends(_verificar_token)])
@@ -279,14 +283,19 @@ try:
         from .alo_service import AloService
         if len(body.chamadas) > _ALO_MAX_LOTE:
             raise HTTPException(status_code=413, detail=f"Lote excede o máximo de {_ALO_MAX_LOTE} ligações.")
-        return AloService.processar_payload(body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia)
+        return AloService.processar_payload(
+            body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia, modo=body.modo
+        )
 
     @app.get("/alo/call/{call_id}", tags=["ALO"], dependencies=[Depends(_verificar_token)])
-    def analisar_call(call_id: str, persistir: bool = Query(True), usar_ia: Optional[bool] = Query(None)):
+    def analisar_call(
+        call_id: str, persistir: bool = Query(True),
+        usar_ia: Optional[bool] = Query(None), modo: Optional[str] = Query(None),
+    ):
         from .alo_service import AloService
         if not _ALO_CALL_ID_RE.match(call_id):
             raise HTTPException(status_code=400, detail="call_id inválido.")
-        return AloService.analisar_call(call_id, persistir=persistir, usar_ia=usar_ia)
+        return AloService.analisar_call(call_id, persistir=persistir, usar_ia=usar_ia, modo=modo)
 
     @app.post("/alo/processar", tags=["ALO"], dependencies=[Depends(_verificar_token)])
     def processar_alo(

@@ -135,7 +135,8 @@ class AloService:
 
     @staticmethod
     def analisar_call(
-        call_id: str, persistir: bool = True, usar_ia: Optional[bool] = None
+        call_id: str, persistir: bool = True, usar_ia: Optional[bool] = None,
+        modo: Optional[str] = None,
     ) -> dict:
         """Puxa CDR + transcrição do Olos, analisa e (opcional) persiste."""
         raw = OlosClient.get_call(call_id) or {}
@@ -145,7 +146,7 @@ class AloService:
         raw.setdefault("call_id", call_id)
         cid, lig = mapear_ligacao(raw)
         cid = cid or call_id
-        resultado = ANALISADOR.analisar(lig, usar_ia=usar_ia)
+        resultado = ANALISADOR.analisar(lig, modo=modo, usar_ia=usar_ia)
         if persistir:
             _persistir(cid, lig, resultado)
         out = resultado.to_dict()
@@ -154,7 +155,8 @@ class AloService:
 
     @staticmethod
     def processar_payload(
-        chamadas: list, persistir: bool = True, usar_ia: Optional[bool] = None
+        chamadas: list, persistir: bool = True, usar_ia: Optional[bool] = None,
+        modo: Optional[str] = None,
     ) -> dict:
         """Analisa uma lista de registros de chamada já em memória.
 
@@ -164,7 +166,7 @@ class AloService:
         resumo = {
             "processadas": 0, "persistidas": 0, "alo": 0, "nao_alo": 0,
             "com_atraso": 0, "falsos_positivos": 0, "falsos_negativos": 0,
-            "score_medio": 0.0, "por_classificacao": {},
+            "escaladas_ia": 0, "score_medio": 0.0, "por_classificacao": {},
             "backend": alo_store.backend(), "ts": datetime.utcnow().isoformat(),
         }
         soma_score = 0
@@ -172,13 +174,14 @@ class AloService:
             if not isinstance(raw, dict):
                 continue
             cid, lig = mapear_ligacao(raw)
-            r = ANALISADOR.analisar(lig, usar_ia=usar_ia)
+            r = ANALISADOR.analisar(lig, modo=modo, usar_ia=usar_ia)
             resumo["processadas"] += 1
             resumo["alo"] += int(r.houve_alo)
             resumo["nao_alo"] += int(not r.houve_alo)
             resumo["com_atraso"] += int(r.houve_atraso)
             resumo["falsos_positivos"] += int(r.falso_positivo_alo)
             resumo["falsos_negativos"] += int(r.falso_negativo_alo)
+            resumo["escaladas_ia"] += int(r.escalado_para_ia or r.origem == "ia")
             resumo["por_classificacao"][r.classificacao] = (
                 resumo["por_classificacao"].get(r.classificacao, 0) + 1
             )
@@ -200,6 +203,7 @@ class AloService:
         limite: int = 200,
         persistir: bool = True,
         usar_ia: Optional[bool] = None,
+        modo: Optional[str] = None,
     ) -> dict:
         """Analisa em lote as chamadas recentes do discador (Olos).
 
@@ -208,7 +212,9 @@ class AloService:
         if desde is None:
             desde = (date.today() - timedelta(days=1)).isoformat()
         chamadas = OlosClient.get_calls_para_alo(desde=desde, limite=limite)
-        resumo = AloService.processar_payload(chamadas, persistir=persistir, usar_ia=usar_ia)
+        resumo = AloService.processar_payload(
+            chamadas, persistir=persistir, usar_ia=usar_ia, modo=modo
+        )
         resumo["desde"] = desde
         return resumo
 

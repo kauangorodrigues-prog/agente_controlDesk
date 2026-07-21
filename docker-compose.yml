@@ -1,0 +1,54 @@
+# Robô Analisador de Ligações ALO / NÃO ALO — pronto para produção.
+#
+#   1. cp .env.docker.example .env   (e preencha ROBO_ALO_API_KEY e POSTGRES_PASSWORD)
+#   2. docker compose up -d --build
+#   3. teste:  curl -H "X-API-Key: <sua-chave>" http://localhost:5501/
+#
+# Persistência: usa o Postgres do serviço 'db'. O robô cria a tabela sozinho.
+services:
+  robo-alo:
+    build: .
+    image: agente-controldesk-robo-alo:latest
+    restart: always
+    ports:
+      - "${ROBO_ALO_PORT:-5501}:5501"
+    environment:
+      # Segurança
+      ROBO_ALO_API_KEY: "${ROBO_ALO_API_KEY:?defina ROBO_ALO_API_KEY no .env}"
+      ROBO_ALO_HOST: "0.0.0.0"
+      ROBO_ALO_PORT: "5501"
+      ROBO_ALO_WORKERS: "${ROBO_ALO_WORKERS:-2}"
+      ROBO_ALO_RATE_LIMIT: "${ROBO_ALO_RATE_LIMIT:-120}"
+      ROBO_ALO_CORS_ORIGINS: "${ROBO_ALO_CORS_ORIGINS:-}"
+      # Análise
+      ALO_MODO: "${ALO_MODO:-hibrido}"
+      ALO_HIBRIDO_LIMIAR: "${ALO_HIBRIDO_LIMIAR:-80}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
+      # Persistência (Postgres do serviço 'db')
+      POSTGRES_HOST: "db"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB:-alo}"
+      POSTGRES_USER: "${POSTGRES_USER:-alo}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-alo}"
+      POSTGRES_USER: "${POSTGRES_USER:-alo}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}"
+    volumes:
+      - alo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alo} -d ${POSTGRES_DB:-alo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  alo-db:

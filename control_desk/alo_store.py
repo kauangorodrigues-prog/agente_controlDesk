@@ -32,10 +32,28 @@ COLUNAS = [
 _SQLITE_PATH = os.getenv("ALO_SQLITE_PATH", os.path.join("data", "alo_analises.db"))
 _lock = threading.Lock()
 _pronto = False
+_backend_cache: Optional[str] = None
+
+
+def _postgres_ok() -> bool:
+    try:
+        from .db import testar_conexao
+        return testar_conexao()
+    except Exception:
+        return False
 
 
 def backend() -> str:
-    return "postgres" if engine is not None else "sqlite"
+    """'postgres' se houver engine e o banco responder; senão 'sqlite'.
+
+    Decidido uma vez e memorizado — garante fallback automático para SQLite
+    quando o Postgres não está configurado ou não está acessível.
+    """
+    global _backend_cache
+    if _backend_cache is None:
+        _backend_cache = "postgres" if (engine is not None and _postgres_ok()) else "sqlite"
+        log.info(f"Persistência ALO: backend={_backend_cache}")
+    return _backend_cache
 
 
 def disponivel() -> bool:
