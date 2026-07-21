@@ -49,6 +49,10 @@ if not _API_KEY:
 _RATE_LIMIT = max(1, int(os.getenv("ROBO_ALO_RATE_LIMIT", "120")))   # req/min por IP
 _MAX_LOTE = max(1, int(os.getenv("ROBO_ALO_MAX_LOTE", "1000")))      # ligações por lote
 _MAX_BYTES = max(1024, int(os.getenv("ROBO_ALO_MAX_BYTES", str(5 * 1024 * 1024))))
+# Só confie no X-Forwarded-For quando o robô estiver atrás de um proxy confiável
+# (ex.: Caddy no docker-compose de HTTPS). Sem isso, o IP do proxy contaria como
+# um único cliente e o rate-limit limitaria todos juntos.
+_TRUST_PROXY = os.getenv("ROBO_ALO_TRUST_PROXY", "false").lower() in ("1", "true", "yes")
 _CALL_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,128}$")  # sem pontos/barras (anti path-traversal)
 
 try:
@@ -135,7 +139,11 @@ try:
             except ValueError:
                 pass
         # Rate-limit (janela deslizante de 60s por IP)
-        ip = request.client.host if request.client else "desconhecido"
+        if _TRUST_PROXY:
+            fwd = request.headers.get("x-forwarded-for", "")
+            ip = fwd.split(",")[0].strip() or (request.client.host if request.client else "desconhecido")
+        else:
+            ip = request.client.host if request.client else "desconhecido"
         agora = time.time()
         with _rl_lock:
             dq = _hits[ip]

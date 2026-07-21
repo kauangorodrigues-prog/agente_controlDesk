@@ -1,17 +1,42 @@
-# Robô Analisador de Ligações ALO / NÃO ALO — pronto para produção.
+# Robô Analisador de Ligações ALO / NÃO ALO — produção com HTTPS automático.
 #
-#   1. cp .env.docker.example .env   (e preencha ROBO_ALO_API_KEY e POSTGRES_PASSWORD)
+#   1. cp .env.docker.example .env
+#      preencha ROBO_ALO_API_KEY, POSTGRES_PASSWORD e ALO_DOMAIN.
 #   2. docker compose up -d --build
-#   3. teste:  curl -H "X-API-Key: <sua-chave>" http://localhost:5501/
+#   3. teste:
+#        # domínio público (Let's Encrypt automático):
+#        curl -H "X-API-Key: <chave>" https://SEU_DOMINIO/
+#        # local (certificado interno):
+#        curl -k -H "X-API-Key: <chave>" https://localhost/
 #
-# Persistência: usa o Postgres do serviço 'db'. O robô cria a tabela sozinho.
+# O Caddy obtém e renova o certificado TLS sozinho. O robô fica na rede interna
+# (exposto ao host só em 127.0.0.1:5501 para depuração); o tráfego externo entra
+# pelo Caddy nas portas 80/443. Persistência em Postgres; o robô cria a tabela.
 services:
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ALO_DOMAIN: "${ALO_DOMAIN:-localhost}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - robo-alo
+
   robo-alo:
     build: .
     image: agente-controldesk-robo-alo:latest
     restart: always
+    # Exposto só ao próprio host (127.0.0.1) para depuração; o acesso externo é
+    # via Caddy (HTTPS). Para expor direto na rede interna, troque por "5501:5501".
     ports:
-      - "${ROBO_ALO_PORT:-5501}:5501"
+      - "127.0.0.1:${ROBO_ALO_PORT:-5501}:5501"
     environment:
       # Segurança
       ROBO_ALO_API_KEY: "${ROBO_ALO_API_KEY:?defina ROBO_ALO_API_KEY no .env}"
@@ -20,6 +45,7 @@ services:
       ROBO_ALO_WORKERS: "${ROBO_ALO_WORKERS:-2}"
       ROBO_ALO_RATE_LIMIT: "${ROBO_ALO_RATE_LIMIT:-120}"
       ROBO_ALO_CORS_ORIGINS: "${ROBO_ALO_CORS_ORIGINS:-}"
+      ROBO_ALO_TRUST_PROXY: "true"          # atrás do Caddy — usa o IP real (X-Forwarded-For)
       # Análise
       ALO_MODO: "${ALO_MODO:-hibrido}"
       ALO_HIBRIDO_LIMIAR: "${ALO_HIBRIDO_LIMIAR:-80}"
@@ -52,3 +78,5 @@ services:
 
 volumes:
   alo-db:
+  caddy-data:
+  caddy-config:

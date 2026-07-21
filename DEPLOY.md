@@ -6,10 +6,11 @@ detalhada em [`SECURITY.md`](SECURITY.md).
 
 ---
 
-## Opção A — Docker Compose (recomendado)
+## Opção A — Docker Compose com HTTPS automático (recomendado)
 
-Sobe o robô + Postgres, com reinício automático. É o caminho mais rápido para
-ficar 24/7.
+Sobe **Caddy (HTTPS automático) + robô + Postgres**, com reinício automático.
+O Caddy obtém e renova o certificado TLS sozinho. É o caminho para ficar 24/7 e
+seguro na internet.
 
 ```bash
 # 1. Configuração
@@ -17,27 +18,36 @@ cp .env.docker.example .env
 #    edite .env e defina, no mínimo:
 #      ROBO_ALO_API_KEY   (openssl rand -base64 32)
 #      POSTGRES_PASSWORD  (openssl rand -base64 24)
+#      ALO_DOMAIN         (seu domínio público; ou deixe 'localhost' p/ testar)
 
 # 2. Subir
 docker compose up -d --build
 
 # 3. Testar
-curl -H "X-API-Key: $ROBO_ALO_API_KEY" http://localhost:5501/
+#    domínio público:
+curl -H "X-API-Key: $ROBO_ALO_API_KEY" https://SEU_DOMINIO/
+#    local (certificado interno → -k):
+curl -k -H "X-API-Key: $ROBO_ALO_API_KEY" https://localhost/
 ```
 
 O robô cria a tabela `alo_analises` sozinho no Postgres. Logs:
-`docker compose logs -f robo-alo`. Atualizar: `git pull && docker compose up -d --build`.
+`docker compose logs -f`. Atualizar: `git pull && docker compose up -d --build`.
 
-### HTTPS
+### Como funciona o HTTPS automático
 
-Em produção, ponha um proxy TLS na frente (nginx/Caddy) ou use certificados
-diretos (`ROBO_ALO_TLS_CERT`/`ROBO_ALO_TLS_KEY`). Exemplo de bloco Caddy:
+- Defina **`ALO_DOMAIN`** com um domínio público cujo DNS aponte para o servidor
+  e mantenha as **portas 80 e 443 abertas**. O Caddy emite e renova o
+  certificado Let's Encrypt automaticamente — sem passo manual.
+- Com `ALO_DOMAIN=localhost`, o Caddy usa um **certificado interno** (self-signed)
+  para teste — use `curl -k`.
+- O robô fica na rede interna do compose (exposto ao host só em
+  `127.0.0.1:5501` para depuração); todo o tráfego externo entra pelo Caddy.
+- O Caddy repassa o `X-Forwarded-For`, e o robô (`ROBO_ALO_TRUST_PROXY=true`, já
+  configurado no compose) aplica o rate-limit pelo **IP real** de cada cliente.
+- Adiciona **HSTS** e HTTP/2+HTTP/3 automaticamente.
 
-```
-ligacoes.suaempresa.com {
-    reverse_proxy 127.0.0.1:5501
-}
-```
+> Alternativa sem Caddy: certificados diretos no robô via
+> `ROBO_ALO_TLS_CERT`/`ROBO_ALO_TLS_KEY`.
 
 ---
 
@@ -119,7 +129,8 @@ traz `origem` (`heuristica`/`ia`) e `escalado_para_ia`; o resumo de lote traz
 ## Checklist final de produção
 
 - [ ] `ROBO_ALO_API_KEY` forte definida (não a chave gerada automaticamente).
-- [ ] HTTPS na frente (proxy TLS) ou `ROBO_ALO_TLS_CERT/KEY`.
+- [ ] HTTPS ativo: `ALO_DOMAIN` com DNS apontando + portas 80/443 abertas (Caddy
+      emite o certificado), ou `ROBO_ALO_TLS_CERT/KEY` no robô.
 - [ ] Postgres com senha forte e backup; retenção/expurgo dos dados (LGPD).
 - [ ] `ROBO_ALO_WORKERS` dimensionado à CPU.
 - [ ] Monitoramento do `/health` e dos logs.
