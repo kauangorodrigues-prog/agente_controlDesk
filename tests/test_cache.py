@@ -2,7 +2,6 @@
 invalidação de feriados. Não dependem de Redis nem de banco."""
 import importlib
 
-import pytest
 
 mod = importlib.import_module("agente_ia_control_desk")
 

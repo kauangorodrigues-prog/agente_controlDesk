@@ -12,17 +12,12 @@ import logging
 import math
 import os
 import re
-import smtplib
 import threading
 import time
 import traceback
 import uuid
-from contextlib import asynccontextmanager, contextmanager
-from datetime import date, datetime, timedelta, time as dtime
-from email import encoders
-from email.mime.base import MIMEBase
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
@@ -869,7 +864,7 @@ class HolidayService:
             permite_dom = False
 
         if dia_semana == 6 and not permite_dom:
-            return False, f"Discagem bloqueada aos domingos"
+            return False, "Discagem bloqueada aos domingos"
 
         hora_fim = hora_fim_sa if dia_semana == 5 else hora_fim_s
 
@@ -2132,7 +2127,7 @@ class JobQueue:
 # ══════════════════════════════════════════════════════════════════════
 
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+    from fastapi import Depends, FastAPI, HTTPException, Query, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
     from fastapi.responses import Response
@@ -2495,7 +2490,6 @@ def rodar_dashboard():
     try:
         import streamlit as st
         import plotly.express as px
-        import plotly.graph_objects as go
     except ImportError:
         print("Streamlit/Plotly não instalados. Rode: pip install streamlit plotly")
         return
@@ -2521,7 +2515,7 @@ def rodar_dashboard():
     def _q(sql, params=None):
         try:
             return pd.read_sql(sql, engine, params=params)
-        except Exception as e:
+        except Exception:
             return pd.DataFrame()
 
     aba1, aba2, aba3, aba4, aba5, aba6 = st.tabs([
