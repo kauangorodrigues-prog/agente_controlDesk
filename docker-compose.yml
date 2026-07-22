@@ -1,0 +1,81 @@
+# ============================================================
+# Agente IA Control Desk — stack local (Postgres + API)
+# ============================================================
+# Uso:
+#   cp .env.example .env         # ajuste as variáveis
+#   docker compose up --build
+#   docker compose exec api python scripts/create_user.py -u admin -r admin
+#
+# O schema e o seed são aplicados automaticamente na PRIMEIRA
+# inicialização do volume do Postgres (docker-entrypoint-initdb.d).
+# ============================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-control_desk}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/seed_data.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-control_desk}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: &app_env
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-control_desk}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-troque-em-producao}
+      DIALER_BASE_URL: ${DIALER_BASE_URL:-}
+      DIALER_TOKEN: ${DIALER_TOKEN:-}
+      COLLECTOR_BASE_URL: ${COLLECTOR_BASE_URL:-}
+      COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:-}
+      WEBHOOK_ALERTA: ${WEBHOOK_ALERTA:-}
+      AMBIENTE: ${AMBIENTE:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    ports:
+      - "8000:8000"
+    command: python agente_ia_control_desk.py api
+
+  worker:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *app_env
+    command: celery -A celery_app worker --loglevel=INFO
+
+volumes:
+  pgdata:

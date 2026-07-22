@@ -1,0 +1,62 @@
+"""Fase 6: garante que os módulos extraídos vivem no pacote `app` e que a
+fachada `agente_ia_control_desk` continua reexportando os nomes públicos."""
+import importlib
+
+mod = importlib.import_module("agente_ia_control_desk")
+
+
+def test_modulos_extraidos_importam_isolados():
+    from app.core import resilience, cache, database
+    from app.utils import validators
+    from app import config
+    assert callable(resilience.retry_call)
+    assert callable(validators.validar_cpf)
+    assert callable(database.executar_query)
+    assert hasattr(config, "CFG") and hasattr(cache, "CACHE")
+
+
+def test_fachada_banco_compartilha_engine():
+    import app.core.database as dbmod
+    assert mod.engine is dbmod.engine
+    assert mod.executar_query is dbmod.executar_query
+    assert mod.get_db is dbmod.get_db
+
+
+def test_integracoes_e_alertas_extraidos():
+    import app.integrations.clients as clients
+    import app.alerts.webhook as webhook
+    assert mod.DialerClient is clients.DialerClient
+    assert mod.CollectorClient is clients.CollectorClient
+    assert mod.send_webhook_alert is webhook.send_webhook_alert
+
+
+def test_fachada_reexporta_do_pacote():
+    # Os símbolos reexportados apontam para o pacote app (não mais definidos no monólito).
+    assert mod.CircuitBreaker.__module__ == "app.core.resilience"
+    assert mod.retry_call.__module__ == "app.core.resilience"
+    assert mod.validar_cpf.__module__ == "app.utils.validators"
+    assert type(mod.CFG).__module__ == "app.config"
+    assert type(mod.CACHE).__module__ == "app.core.cache"
+
+
+def test_fachada_compartilha_os_mesmos_objetos():
+    # Compartilhar a MESMA instância é o que mantém monkeypatch/estado funcionando.
+    from app.config import CFG as CFG_pkg
+    from app.core.cache import CACHE as CACHE_pkg
+    assert mod.CFG is CFG_pkg
+    assert mod.CACHE is CACHE_pkg
+
+
+def test_api_publica_preservada():
+    # Nomes usados por entrypoints/celery/scripts/testes continuam disponíveis.
+    for nome in ("CFG", "app", "engine", "executar_query", "executar_comando",
+                 "JOBS_REGISTRO", "_safe_run", "MailingScoreService", "PropensityModel",
+                 "retry_call", "CircuitBreaker", "executar_com_timeout",
+                 "validar_cpf", "validar_telefone", "_str_para_time",
+                 "DDDS_VALIDOS", "DDD_SCORE_MAP"):
+        assert hasattr(mod, nome), f"faltou reexportar {nome}"
+
+
+def test_validar_delegado_pela_classe():
+    assert mod.MailingScoreService.validar_cpf("529.982.247-25") is True
+    assert mod.MailingScoreService.validar_telefone("(11) 98888-7777") == "11988887777"
