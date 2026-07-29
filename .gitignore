@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── Projeto ControlDesk Cobranças SaaS ──────────────────────
+# Banco SQLite local
+*.db
+backend/controldesk.db
+# Front-end
+node_modules/
+frontend/dist/
+# Ambiente
+.env
+backend/.env
+frontend/.env

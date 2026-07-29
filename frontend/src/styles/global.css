@@ -1,0 +1,297 @@
+:root {
+  --bg: #0b1120;
+  --bg-soft: #111a2e;
+  --surface: #16223c;
+  --surface-2: #1d2c4a;
+  --border: #26365a;
+  --text: #e6edf7;
+  --text-dim: #9fb0cc;
+  --primary: #3b82f6;
+  --primary-dark: #2563eb;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --accent: #8b5cf6;
+  --radius: 12px;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 80% -10%, #16223c 0%, var(--bg) 55%);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* ── Botões ─────────────────────────────────────────── */
+.btn {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 600;
+  font-size: 14px;
+  background: var(--primary);
+  color: white;
+  transition: background 0.15s, transform 0.05s;
+}
+.btn:hover {
+  background: var(--primary-dark);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn.secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--text-dim);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Inputs ─────────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.field label {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.input {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 11px 13px;
+  font-size: 14px;
+  outline: none;
+  transition: border 0.15s;
+}
+.input:focus {
+  border-color: var(--primary);
+}
+
+/* ── Cartões ────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+.card h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+/* ── Login ──────────────────────────────────────────── */
+.login-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+.brand .dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+/* ── Layout app ─────────────────────────────────────── */
+.app-shell {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  min-height: 100vh;
+}
+.sidebar {
+  background: var(--bg-soft);
+  border-right: 1px solid var(--border);
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+}
+.nav-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 18px 10px 8px;
+}
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 500;
+}
+.nav-link:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.nav-link.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.nav-link .ico {
+  width: 18px;
+  text-align: center;
+}
+.main {
+  padding: 28px 34px;
+  overflow-x: auto;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+.topbar h1 {
+  font-size: 22px;
+  margin: 0;
+}
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+}
+
+/* ── Grid de métricas ───────────────────────────────── */
+.grid {
+  display: grid;
+  gap: 18px;
+}
+.grid.cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.grid.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.grid.cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (max-width: 1000px) {
+  .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .grid.cols-3 { grid-template-columns: 1fr; }
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+}
+.metric .label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.metric .value {
+  font-size: 28px;
+  font-weight: 800;
+  margin-top: 6px;
+}
+
+/* ── Tabelas ────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th,
+td {
+  text-align: left;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+tbody tr:hover {
+  background: var(--bg-soft);
+}
+
+/* ── Badges ─────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.badge.green { background: rgba(34,197,94,0.15); color: #4ade80; }
+.badge.amber { background: rgba(245,158,11,0.15); color: #fbbf24; }
+.badge.red { background: rgba(239,68,68,0.15); color: #f87171; }
+.badge.blue { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.badge.gray { background: rgba(159,176,204,0.12); color: var(--text-dim); }
+
+/* ── Utilidades ─────────────────────────────────────── */
+.row { display: flex; gap: 12px; align-items: center; }
+.between { justify-content: space-between; }
+.muted { color: var(--text-dim); }
+.error-text { color: var(--danger); font-size: 13px; }
+.section-title { font-size: 15px; font-weight: 700; margin: 26px 0 12px; }
+.spacer { flex: 1; }
+.pill-bar { height: 8px; background: var(--bg-soft); border-radius: 999px; overflow: hidden; }
+.pill-bar > span { display: block; height: 100%; background: linear-gradient(90deg,var(--primary),var(--accent)); }
+
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+  display: grid; place-items: center; z-index: 50; padding: 20px;
+}
+.modal { width: 100%; max-width: 480px; }

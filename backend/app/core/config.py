@@ -1,0 +1,85 @@
+"""Configuração central da aplicação.
+
+Todas as configurações são carregadas de variáveis de ambiente (ou de um
+arquivo .env), com valores padrão seguros para desenvolvimento local.
+"""
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from typing import List
+
+try:  # carrega .env se disponível
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:  # pragma: no cover
+    pass
+
+
+class Settings:
+    """Configurações da aplicação (12-factor / env driven)."""
+
+    def __init__(self) -> None:
+        # ── Identidade da aplicação ─────────────────────────────
+        self.APP_NAME: str = os.getenv("APP_NAME", "ControlDesk Cobranças SaaS")
+        self.APP_ENV: str = os.getenv("APP_ENV", "development")
+        self.APP_VERSION: str = os.getenv("APP_VERSION", "1.0.0")
+        self.DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+
+        # ── Banco de Dados ──────────────────────────────────────
+        # Padrão: SQLite (zero-config, roda em qualquer lugar).
+        # Produção: defina DATABASE_URL para PostgreSQL.
+        #   ex: postgresql+psycopg://user:pass@host:5432/cobranca
+        self.DATABASE_URL: str = os.getenv(
+            "DATABASE_URL", "sqlite:///./controldesk.db"
+        )
+
+        # ── Segurança / JWT ─────────────────────────────────────
+        self.JWT_SECRET_KEY: str = os.getenv(
+            "JWT_SECRET_KEY", "dev-secret-key-TROQUE-EM-PRODUCAO"
+        )
+        self.JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+        self.ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+            os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480")
+        )
+        # Custo do hashing bcrypt (rounds). 12 é um bom padrão de produção.
+        self.BCRYPT_ROUNDS: int = int(os.getenv("BCRYPT_ROUNDS", "12"))
+
+        # ── CORS ────────────────────────────────────────────────
+        self.CORS_ORIGINS: List[str] = [
+            o.strip()
+            for o in os.getenv(
+                "CORS_ORIGINS",
+                "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
+            ).split(",")
+            if o.strip()
+        ]
+
+        # ── LGPD ────────────────────────────────────────────────
+        self.DATA_CONTROLLER_NAME: str = os.getenv(
+            "DATA_CONTROLLER_NAME", "ControlDesk Cobranças LTDA"
+        )
+        self.DPO_EMAIL: str = os.getenv("DPO_EMAIL", "dpo@controldesk.example.com")
+        # Retenção padrão de dados pessoais após quitação (dias).
+        self.LGPD_RETENTION_DAYS: int = int(os.getenv("LGPD_RETENTION_DAYS", "1825"))
+
+        # ── Seed / bootstrap ────────────────────────────────────
+        self.FIRST_ADMIN_EMAIL: str = os.getenv(
+            "FIRST_ADMIN_EMAIL", "admin@controldesk.example.com"
+        )
+        self.FIRST_ADMIN_PASSWORD: str = os.getenv(
+            "FIRST_ADMIN_PASSWORD", "Admin@123456"
+        )
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.DATABASE_URL.startswith("sqlite")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
