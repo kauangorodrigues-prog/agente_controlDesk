@@ -18,6 +18,7 @@ from app.routers import (
     infraestrutura,
     lgpd,
     mis,
+    notifications,
     planejamento,
     users,
 )
@@ -109,4 +110,5 @@ app.include_router(planejamento.router)
 app.include_router(mis.router)
 app.include_router(desenvolvimento.router)
 app.include_router(infraestrutura.router)
+app.include_router(notifications.router)
 app.include_router(lgpd.router)

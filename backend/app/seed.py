@@ -25,6 +25,7 @@ from app.models.devops import Deployment, Feature
 from app.models.infra import Incident, SystemHealthCheck
 from app.models.interaction import Interaction
 from app.models.lgpd import ConsentRecord, DataSubjectRequest
+from app.models.notification import Notification
 from app.models.payment import Payment, PaymentAgreement
 from app.models.planning import Forecast, Goal
 from app.models.user import User
@@ -278,6 +279,32 @@ def seed_lgpd_requests(db) -> None:
     db.commit()
 
 
+def seed_notifications(db) -> None:
+    if db.scalar(select(Notification).limit(1)):
+        return
+    rng = random.Random(11)
+    debtors = db.scalars(select(Debtor).limit(20)).all()
+    templates = ["lembrete", "proposta", "acordo_confirmado"]
+    statuses = ["simulado", "enviado", "enviado", "sem_contato"]
+    subjects = {
+        "lembrete": "Lembrete sobre sua pendência",
+        "proposta": "Proposta de negociação",
+        "acordo_confirmado": "Acordo confirmado",
+    }
+    for debtor in debtors:
+        for _ in range(rng.randint(0, 2)):
+            tmpl = rng.choice(templates)
+            db.add(Notification(
+                debtor_id=debtor.id,
+                channel="email",
+                template=tmpl,
+                subject=subjects[tmpl],
+                status=rng.choice(statuses),
+                created_at=datetime.now(timezone.utc) - timedelta(days=rng.randint(0, 20)),
+            ))
+    db.commit()
+
+
 def seed_sectors(db) -> None:
     rng = random.Random(99)
     if not db.scalar(select(Campaign).limit(1)):
@@ -372,6 +399,7 @@ def main() -> None:
         )
         seed_collection(db, operator.id if operator else master.id)
         seed_lgpd_requests(db)
+        seed_notifications(db)
         seed_sectors(db)
 
         n_debtors = db.scalar(select(func.count(Debtor.id)))

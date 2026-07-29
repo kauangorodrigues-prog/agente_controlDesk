@@ -57,6 +57,18 @@ Autenticação: `Authorization: Bearer <token>` (obtido no login). Papéis:
 > Todos os endpoints de setor exigem que o usuário tenha acesso ao respectivo
 > setor (diretoria acessa todos).
 
+## Régua de Comunicação — `/api/notifications`
+
+| Método | Rota          | Descrição                                   |
+| ------ | ------------- | ------------------------------------------- |
+| GET    | `/templates`  | Modelos de mensagem disponíveis             |
+| GET    | `/`           | Histórico de notificações (filtro por devedor) |
+| POST   | `/`           | Envia notificação ao titular                |
+
+> O envio respeita o consentimento/base legal de comunicação do titular
+> (bloqueio `bloqueado_lgpd` quando ausente). Sem SMTP configurado, opera em
+> modo simulado (`simulado`).
+
 ## LGPD — `/api/lgpd`
 
 | Método | Rota                     | Acesso        | Descrição                    |

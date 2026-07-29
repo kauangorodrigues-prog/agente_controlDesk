@@ -60,6 +60,17 @@ class Settings:
         self.LOGIN_MAX_ATTEMPTS: int = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
         self.LOGIN_LOCKOUT_SECONDS: int = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "300"))
 
+        # ── Notificações (SMTP) ────────────────────────────────
+        # Sem SMTP_HOST, a régua opera em modo simulado (dry-run).
+        self.SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+        self.SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+        self.SMTP_USER: str = os.getenv("SMTP_USER", "")
+        self.SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+        self.SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+        self.SMTP_FROM: str = os.getenv(
+            "SMTP_FROM", "cobranca@controldesk.example.com"
+        )
+
         # ── CORS ────────────────────────────────────────────────
         self.CORS_ORIGINS: List[str] = [
             o.strip()

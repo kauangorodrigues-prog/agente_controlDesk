@@ -29,6 +29,15 @@ interface Interaction {
   notes: string | null;
   created_at: string;
 }
+interface Notification {
+  id: number;
+  debtor_id: number;
+  channel: string;
+  template: string;
+  subject: string;
+  status: string;
+  created_at: string;
+}
 
 const PORTFOLIOS = ["ativa", "consignado", "concierge", "bancario"];
 const CHANNELS = ["telefone", "sms", "email", "whatsapp", "discador"];
@@ -48,9 +57,11 @@ export default function Cobranca() {
   const debtors = useFetch<Debtor[]>(`/collection/debtors?q=${encodeURIComponent(q)}`, [q]);
   const debts = useFetch<Debt[]>("/collection/debts");
   const interactions = useFetch<Interaction[]>("/collection/interactions?limit=25");
+  const notifications = useFetch<Notification[]>("/notifications?limit=25");
   const [showDebtor, setShowDebtor] = useState(false);
   const [showDebt, setShowDebt] = useState(false);
   const [showInter, setShowInter] = useState(false);
+  const [showNotif, setShowNotif] = useState(false);
 
   const debtorName = (id: number) =>
     debtors.data?.find((d) => d.id === id)?.full_name ?? `#${id}`;
@@ -71,6 +82,9 @@ export default function Cobranca() {
           </button>
           <button className="btn secondary" onClick={() => setShowInter(true)}>
             + Tabulação
+          </button>
+          <button className="btn secondary" onClick={() => setShowNotif(true)}>
+            + Notificar
           </button>
           <button className="btn" onClick={() => setShowDebt(true)}>
             + Dívida
@@ -185,12 +199,59 @@ export default function Cobranca() {
         </table>
       </div>
 
+      <div className="section-title">Notificações (régua de comunicação)</div>
+      <div className="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Devedor</th>
+              <th>Modelo</th>
+              <th>Canal</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {notifications.data?.map((n) => (
+              <tr key={n.id}>
+                <td className="muted">
+                  {new Date(n.created_at).toLocaleString("pt-BR")}
+                </td>
+                <td>{debtorName(n.debtor_id)}</td>
+                <td>{n.template}</td>
+                <td style={{ textTransform: "capitalize" }}>{n.channel}</td>
+                <td>
+                  <Badge value={n.status} />
+                </td>
+              </tr>
+            ))}
+            {!notifications.data?.length && (
+              <tr>
+                <td colSpan={5} className="muted">
+                  Nenhuma notificação enviada.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
       {showDebtor && (
         <DebtorModal
           onClose={() => setShowDebtor(false)}
           onSaved={() => {
             setShowDebtor(false);
             debtors.reload();
+          }}
+        />
+      )}
+      {showNotif && (
+        <NotificationModal
+          debtors={debtors.data ?? []}
+          onClose={() => setShowNotif(false)}
+          onSaved={() => {
+            setShowNotif(false);
+            notifications.reload();
           }}
         />
       )}
@@ -517,6 +578,107 @@ function InteractionModal({
         {error && <p className="error-text">{error}</p>}
         <button className="btn" style={{ width: "100%" }}>
           Salvar tabulação
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+const NOTIF_TEMPLATES = [
+  { key: "lembrete", label: "Lembrete de pendência" },
+  { key: "proposta", label: "Proposta de negociação" },
+  { key: "acordo_confirmado", label: "Acordo confirmado" },
+];
+
+function NotificationModal({
+  debtors,
+  onClose,
+  onSaved,
+}: {
+  debtors: Debtor[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    debtor_id: debtors[0]?.id ?? 0,
+    template: "lembrete",
+    channel: "email",
+  });
+  const [error, setError] = useState("");
+  const [result, setResult] = useState("");
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setResult("");
+    try {
+      const n = await api.post<{ status: string }>("/notifications", {
+        ...form,
+        debtor_id: Number(form.debtor_id),
+      });
+      if (n.status === "bloqueado_lgpd") {
+        setError(
+          "Envio bloqueado: titular sem base legal/consentimento para comunicação (LGPD)."
+        );
+        return;
+      }
+      setResult(`Notificação registrada (status: ${n.status}).`);
+      setTimeout(onSaved, 700);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Erro ao enviar.");
+    }
+  }
+
+  return (
+    <Modal title="Enviar notificação" onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label>Devedor</label>
+          <select
+            className="input"
+            value={form.debtor_id}
+            onChange={(e) => setForm({ ...form, debtor_id: Number(e.target.value) })}
+            required
+          >
+            {debtors.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.full_name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="row">
+          <div className="field" style={{ flex: 1 }}>
+            <label>Modelo</label>
+            <select
+              className="input"
+              value={form.template}
+              onChange={(e) => setForm({ ...form, template: e.target.value })}
+            >
+              {NOTIF_TEMPLATES.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Canal</label>
+            <select
+              className="input"
+              value={form.channel}
+              onChange={(e) => setForm({ ...form, channel: e.target.value })}
+            >
+              <option value="email">email</option>
+              <option value="sms">sms</option>
+              <option value="whatsapp">whatsapp</option>
+            </select>
+          </div>
+        </div>
+        {error && <p className="error-text">{error}</p>}
+        {result && <p style={{ color: "var(--success)", fontSize: 13 }}>{result}</p>}
+        <button className="btn" style={{ width: "100%", marginTop: 4 }}>
+          Enviar
         </button>
       </form>
     </Modal>
