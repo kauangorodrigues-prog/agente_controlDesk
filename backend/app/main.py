@@ -33,6 +33,7 @@ logger = logging.getLogger("controldesk")
 async def lifespan(app: FastAPI):
     logger.info("Iniciando %s v%s (%s)", settings.APP_NAME, settings.APP_VERSION,
                 settings.APP_ENV)
+    settings.validate_for_production()  # falha rápido com segredos inseguros
     init_db()
     yield
     logger.info("Encerrando aplicação.")
@@ -69,6 +70,10 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=()"
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
     return response
 
 

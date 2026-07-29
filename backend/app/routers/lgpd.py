@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.crypto import blind_index
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_role
 from app.core.rbac import Role
@@ -119,7 +120,9 @@ def open_request(payload: DSRCreate, request: Request, db: Session = Depends(get
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tipo de requisição inválido.")
 
     document = re.sub(r"\D", "", payload.requester_document)
-    debtor = db.scalar(select(Debtor).where(Debtor.document == document))
+    debtor = db.scalar(
+        select(Debtor).where(Debtor.document_hash == blind_index(document))
+    )
 
     dsr = DataSubjectRequest(
         debtor_id=debtor.id if debtor else None,

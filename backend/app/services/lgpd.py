@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.crypto import blind_index
 from app.models.debt import Debt
 from app.models.debtor import Debtor
 from app.models.interaction import Interaction
@@ -94,8 +95,10 @@ def anonymize_debtor(db: Session, debtor: Debtor) -> None:
         f"{debtor.id}:{debtor.document}:{datetime.now(timezone.utc)}".encode()
     ).hexdigest()[:12]
 
+    anon_doc = f"ANON{token}"
     debtor.full_name = f"TITULAR-ANONIMIZADO-{token}"
-    debtor.document = f"ANON{token}"
+    debtor.document = anon_doc
+    debtor.document_hash = blind_index(anon_doc)
     debtor.email = None
     debtor.phone = None
     debtor.phone_alt = None

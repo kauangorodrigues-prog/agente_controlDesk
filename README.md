@@ -104,6 +104,8 @@ Veja **[docs/LGPD.md](docs/LGPD.md)** para o detalhamento por artigo. Destaques:
 - **Exportação de dados** (acesso e portabilidade)
 - **Trilha de auditoria** de todas as operações sensíveis (art. 37)
 - **Minimização de dados** — documentos exibidos sempre mascarados
+- **Criptografia de CPF/CNPJ em repouso** (Fernet) com busca por índice cego
+- **Proteção de login** contra brute-force + validação de segredos em produção
 
 ---
 

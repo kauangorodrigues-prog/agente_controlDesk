@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import Boolean, Date, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.crypto import EncryptedStr
 from app.core.database import Base
 
 
@@ -21,8 +22,10 @@ class Debtor(Base):
     __tablename__ = "debtors"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Documento (CPF/CNPJ) armazenado apenas com dígitos.
-    document: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    # Documento (CPF/CNPJ) cifrado em repouso (LGPD). Apenas dígitos no claro.
+    document: Mapped[str] = mapped_column(EncryptedStr(255), nullable=False)
+    # Índice cego (HMAC) para permitir busca/igualdade sem expor o documento.
+    document_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     person_type: Mapped[str] = mapped_column(String(2), default="PF")  # PF | PJ
 
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)

@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from app.core.config import settings
+from app.core.crypto import blind_index
 from app.core.database import SessionLocal, init_db
 from app.core.rbac import Role, Sector
 from app.core.security import hash_password
@@ -133,8 +134,10 @@ def seed_collection(db, operator_id: int) -> None:
     for i in range(60):
         city, state = rng.choice(CITIES)
         birth = date.today() - timedelta(days=rng.randint(21 * 365, 70 * 365))
+        cpf = _cpf(rng)
         debtor = Debtor(
-            document=_cpf(rng),
+            document=cpf,
+            document_hash=blind_index(cpf),
             person_type="PF",
             full_name=f"{rng.choice(FIRST)} {rng.choice(LAST)} {rng.choice(LAST)}",
             email=f"titular{i:03d}@example.com",

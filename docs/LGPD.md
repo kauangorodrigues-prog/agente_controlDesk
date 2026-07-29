@@ -72,10 +72,16 @@ associado a obrigações legais de cobrança e contábeis.
 
 ## Segurança da informação (art. 46)
 
+- **Criptografia de PII em repouso**: CPF/CNPJ são cifrados no banco com
+  Fernet (AES-128 + HMAC). A busca por documento usa um **índice cego**
+  (HMAC-SHA256), sem armazenar o valor em claro. Ver `app/core/crypto.py`.
 - Senhas com **bcrypt** (custo configurável).
-- Autenticação **JWT** com expiração.
+- Autenticação **JWT** com expiração + **proteção contra brute-force**
+  (bloqueio temporário após N tentativas — `app/core/ratelimit.py`).
+- **Validação de segredos em produção**: a aplicação recusa iniciar com
+  chaves padrão de desenvolvimento quando `APP_ENV=production`.
 - **RBAC** hierárquico + escopo por setor (acesso mínimo necessário).
-- Cabeçalhos de segurança e CORS restrito por origem.
+- Cabeçalhos de segurança (incl. **HSTS** em produção) e CORS restrito.
 - **Auditoria** de login, criação/edição de usuários, exportações, anonimizações
   e requisições de titulares.
 

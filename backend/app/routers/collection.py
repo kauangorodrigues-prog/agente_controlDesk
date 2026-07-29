@@ -1,10 +1,13 @@
 """Rotas de cobrança: devedores, dívidas, acordos e pagamentos."""
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.core.crypto import blind_index
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.debt import Debt
@@ -40,8 +43,14 @@ def list_debtors(
 ):
     stmt = select(Debtor)
     if q:
-        term = f"%{q.strip()}%"
-        stmt = stmt.where((Debtor.full_name.ilike(term)) | (Debtor.document.ilike(term)))
+        q = q.strip()
+        conds = [Debtor.full_name.ilike(f"%{q}%")]
+        # Documento é cifrado: busca exata via índice cego quando o termo
+        # tiver a quantidade de dígitos de um CPF (11) ou CNPJ (14).
+        digits = re.sub(r"\D", "", q)
+        if len(digits) in (11, 14):
+            conds.append(Debtor.document_hash == blind_index(digits))
+        stmt = stmt.where(or_(*conds))
     stmt = stmt.order_by(Debtor.full_name).limit(limit)
     return db.scalars(stmt).all()
 
@@ -53,7 +62,8 @@ def create_debtor(
     db: Session = Depends(get_db),
     actor: User = Depends(get_current_user),
 ):
-    debtor = Debtor(**payload.model_dump())
+    data = payload.model_dump()
+    debtor = Debtor(**data, document_hash=blind_index(data["document"]))
     db.add(debtor)
     db.commit()
     db.refresh(debtor)
