@@ -7,6 +7,7 @@ from app.models.user import User  # noqa: F401
 from app.models.access import SectorAccess  # noqa: F401
 from app.models.debtor import Debtor  # noqa: F401
 from app.models.debt import Debt  # noqa: F401
+from app.models.interaction import Interaction  # noqa: F401
 from app.models.payment import Payment, PaymentAgreement  # noqa: F401
 from app.models.control_desk import Campaign, PacingSnapshot  # noqa: F401
 from app.models.planning import Forecast, Goal  # noqa: F401
@@ -20,6 +21,7 @@ __all__ = [
     "SectorAccess",
     "Debtor",
     "Debt",
+    "Interaction",
     "Payment",
     "PaymentAgreement",
     "Campaign",

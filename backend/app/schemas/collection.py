@@ -14,6 +14,11 @@ class DebtorBase(BaseModel):
     person_type: str = Field(default="PF", pattern="^(PF|PJ)$")
     email: str | None = None
     phone: str | None = None
+    phone_alt: str | None = None
+    birth_date: date | None = None
+    zip_code: str | None = Field(default=None, max_length=9)
+    address: str | None = None
+    neighborhood: str | None = None
     city: str | None = None
     state: str | None = Field(default=None, max_length=2)
 
@@ -39,8 +44,14 @@ class DebtorOut(BaseModel):
     person_type: str
     email: str | None
     phone: str | None
+    phone_alt: str | None
+    birth_date: date | None
+    zip_code: str | None
+    address: str | None
+    neighborhood: str | None
     city: str | None
     state: str | None
+    contact_status: str
     is_anonymized: bool
     created_at: datetime
 
@@ -115,3 +126,55 @@ class PaymentOut(BaseModel):
     amount: float
     method: str
     paid_at: date
+
+
+# ── Interação / Tabulação ────────────────────────────────────────────────
+INTERACTION_RESULTS = {
+    "cpc",
+    "cpca",
+    "promessa",
+    "recado",
+    "sem_contato",
+    "numero_errado",
+    "nao_atende",
+    "acordo_fechado",
+}
+INTERACTION_CHANNELS = {"telefone", "sms", "email", "whatsapp", "carta", "discador"}
+
+
+class InteractionCreate(BaseModel):
+    debtor_id: int
+    debt_id: int | None = None
+    channel: str = Field(default="telefone")
+    result: str = Field(default="sem_contato")
+    notes: str | None = Field(default=None, max_length=1000)
+    promise_amount: float | None = Field(default=None, ge=0)
+    promise_date: date | None = None
+
+    @field_validator("result")
+    @classmethod
+    def valid_result(cls, v: str) -> str:
+        if v not in INTERACTION_RESULTS:
+            raise ValueError(f"result deve ser um de: {sorted(INTERACTION_RESULTS)}")
+        return v
+
+    @field_validator("channel")
+    @classmethod
+    def valid_channel(cls, v: str) -> str:
+        if v not in INTERACTION_CHANNELS:
+            raise ValueError(f"channel deve ser um de: {sorted(INTERACTION_CHANNELS)}")
+        return v
+
+
+class InteractionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    debtor_id: int
+    debt_id: int | None
+    channel: str
+    result: str
+    notes: str | None
+    promise_amount: float | None
+    promise_date: date | None
+    created_at: datetime

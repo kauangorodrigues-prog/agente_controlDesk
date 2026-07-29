@@ -8,6 +8,7 @@ interface Debtor {
   full_name: string;
   document_masked: string;
   email: string | null;
+  contact_status: string;
   is_anonymized: boolean;
 }
 interface Debt {
@@ -20,15 +21,39 @@ interface Debt {
   status: string;
   risk_score: number;
 }
+interface Interaction {
+  id: number;
+  debtor_id: number;
+  channel: string;
+  result: string;
+  notes: string | null;
+  created_at: string;
+}
 
 const PORTFOLIOS = ["ativa", "consignado", "concierge", "bancario"];
+const CHANNELS = ["telefone", "sms", "email", "whatsapp", "discador"];
+const RESULTS = [
+  "cpc",
+  "cpca",
+  "promessa",
+  "recado",
+  "sem_contato",
+  "numero_errado",
+  "nao_atende",
+  "acordo_fechado",
+];
 
 export default function Cobranca() {
   const [q, setQ] = useState("");
   const debtors = useFetch<Debtor[]>(`/collection/debtors?q=${encodeURIComponent(q)}`, [q]);
   const debts = useFetch<Debt[]>("/collection/debts");
+  const interactions = useFetch<Interaction[]>("/collection/interactions?limit=25");
   const [showDebtor, setShowDebtor] = useState(false);
   const [showDebt, setShowDebt] = useState(false);
+  const [showInter, setShowInter] = useState(false);
+
+  const debtorName = (id: number) =>
+    debtors.data?.find((d) => d.id === id)?.full_name ?? `#${id}`;
 
   return (
     <>
@@ -43,6 +68,9 @@ export default function Cobranca() {
         <div className="row">
           <button className="btn secondary" onClick={() => setShowDebtor(true)}>
             + Devedor
+          </button>
+          <button className="btn secondary" onClick={() => setShowInter(true)}>
+            + Tabulação
           </button>
           <button className="btn" onClick={() => setShowDebt(true)}>
             + Dívida
@@ -120,11 +148,59 @@ export default function Cobranca() {
         </div>
       </div>
 
+      <div className="section-title">Histórico de contatos (tabulação)</div>
+      <div className="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Devedor</th>
+              <th>Canal</th>
+              <th>Resultado</th>
+              <th>Observação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {interactions.data?.map((i) => (
+              <tr key={i.id}>
+                <td className="muted">
+                  {new Date(i.created_at).toLocaleString("pt-BR")}
+                </td>
+                <td>{debtorName(i.debtor_id)}</td>
+                <td style={{ textTransform: "capitalize" }}>{i.channel}</td>
+                <td>
+                  <Badge value={i.result} />
+                </td>
+                <td className="muted">{i.notes ?? "—"}</td>
+              </tr>
+            ))}
+            {!interactions.data?.length && (
+              <tr>
+                <td colSpan={5} className="muted">
+                  Nenhum contato registrado.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
       {showDebtor && (
         <DebtorModal
           onClose={() => setShowDebtor(false)}
           onSaved={() => {
             setShowDebtor(false);
+            debtors.reload();
+          }}
+        />
+      )}
+      {showInter && (
+        <InteractionModal
+          debtors={debtors.data ?? []}
+          onClose={() => setShowInter(false)}
+          onSaved={() => {
+            setShowInter(false);
+            interactions.reload();
             debtors.reload();
           }}
         />
@@ -343,6 +419,104 @@ function DebtModal({
         {error && <p className="error-text">{error}</p>}
         <button className="btn" style={{ width: "100%" }}>
           Salvar
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function InteractionModal({
+  debtors,
+  onClose,
+  onSaved,
+}: {
+  debtors: Debtor[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    debtor_id: debtors[0]?.id ?? 0,
+    channel: "telefone",
+    result: "cpc",
+    notes: "",
+  });
+  const [error, setError] = useState("");
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await api.post("/collection/interactions", {
+        ...form,
+        debtor_id: Number(form.debtor_id),
+        notes: form.notes || null,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Erro ao salvar.");
+    }
+  }
+
+  return (
+    <Modal title="Registrar contato / tabulação" onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label>Devedor</label>
+          <select
+            className="input"
+            value={form.debtor_id}
+            onChange={(e) => setForm({ ...form, debtor_id: Number(e.target.value) })}
+            required
+          >
+            {debtors.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.full_name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="row">
+          <div className="field" style={{ flex: 1 }}>
+            <label>Canal</label>
+            <select
+              className="input"
+              value={form.channel}
+              onChange={(e) => setForm({ ...form, channel: e.target.value })}
+            >
+              {CHANNELS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Resultado (tabulação)</label>
+            <select
+              className="input"
+              value={form.result}
+              onChange={(e) => setForm({ ...form, result: e.target.value })}
+            >
+              {RESULTS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="field">
+          <label>Observação</label>
+          <textarea
+            className="input"
+            rows={3}
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+        </div>
+        {error && <p className="error-text">{error}</p>}
+        <button className="btn" style={{ width: "100%" }}>
+          Salvar tabulação
         </button>
       </form>
     </Modal>

@@ -5,9 +5,9 @@ anonimizados via solicitação do titular (ver módulo LGPD).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, Date, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -28,8 +28,18 @@ class Debtor(Base):
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str | None] = mapped_column(String(180))
     phone: Mapped[str | None] = mapped_column(String(30))
+    phone_alt: Mapped[str | None] = mapped_column(String(30))
+    birth_date: Mapped[date | None] = mapped_column(Date)
+
+    # Endereço
+    zip_code: Mapped[str | None] = mapped_column(String(9))
+    address: Mapped[str | None] = mapped_column(String(200))
+    neighborhood: Mapped[str | None] = mapped_column(String(120))
     city: Mapped[str | None] = mapped_column(String(120))
     state: Mapped[str | None] = mapped_column(String(2))
+
+    # Situação de contato consolidada (última tabulação relevante)
+    contact_status: Mapped[str] = mapped_column(String(20), default="sem_contato")
 
     # Flag LGPD: dados anonimizados após solicitação de exclusão do titular.
     is_anonymized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -41,6 +51,9 @@ class Debtor(Base):
     )
 
     debts: Mapped[list["Debt"]] = relationship(
+        back_populates="debtor", cascade="all, delete-orphan"
+    )
+    interactions: Mapped[list["Interaction"]] = relationship(
         back_populates="debtor", cascade="all, delete-orphan"
     )
 

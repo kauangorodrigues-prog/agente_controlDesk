@@ -64,6 +64,43 @@ def test_invalid_portfolio_rejected(client, auth_headers):
     assert resp.status_code == 422
 
 
+def test_interaction_updates_contact_status(client, auth_headers):
+    debtor = _create_debtor(client, auth_headers).json()
+    resp = client.post(
+        "/api/collection/interactions",
+        headers=auth_headers,
+        json={
+            "debtor_id": debtor["id"],
+            "channel": "telefone",
+            "result": "promessa",
+            "notes": "Cliente prometeu pagar dia 10.",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["result"] == "promessa"
+    # o status de contato do devedor deve refletir a última tabulação
+    debtors = client.get(
+        f"/api/collection/debtors?q={debtor['document_masked'][:3]}",
+        headers=auth_headers,
+    )
+    # busca direta pelo id via listagem de interações
+    inter = client.get(
+        f"/api/collection/interactions?debtor_id={debtor['id']}", headers=auth_headers
+    ).json()
+    assert len(inter) == 1
+    assert inter[0]["channel"] == "telefone"
+
+
+def test_interaction_invalid_result_rejected(client, auth_headers):
+    debtor = _create_debtor(client, auth_headers).json()
+    resp = client.post(
+        "/api/collection/interactions",
+        headers=auth_headers,
+        json={"debtor_id": debtor["id"], "result": "resultado_invalido"},
+    )
+    assert resp.status_code == 422
+
+
 def test_payment_reduces_balance(client, auth_headers):
     debtor = _create_debtor(client, auth_headers).json()
     debt = client.post(

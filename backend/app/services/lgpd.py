@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.debt import Debt
 from app.models.debtor import Debtor
+from app.models.interaction import Interaction
 from app.models.lgpd import ConsentRecord
 from app.models.payment import Payment
 
@@ -21,6 +22,9 @@ def export_debtor_data(db: Session, debtor: Debtor) -> dict:
     debts = db.scalars(select(Debt).where(Debt.debtor_id == debtor.id)).all()
     consents = db.scalars(
         select(ConsentRecord).where(ConsentRecord.debtor_id == debtor.id)
+    ).all()
+    interactions = db.scalars(
+        select(Interaction).where(Interaction.debtor_id == debtor.id)
     ).all()
 
     debts_payload = []
@@ -48,10 +52,24 @@ def export_debtor_data(db: Session, debtor: Debtor) -> dict:
             "documento": debtor.document,
             "email": debtor.email,
             "telefone": debtor.phone,
+            "telefone_alt": debtor.phone_alt,
+            "nascimento": str(debtor.birth_date) if debtor.birth_date else None,
+            "endereco": debtor.address,
+            "bairro": debtor.neighborhood,
+            "cep": debtor.zip_code,
             "cidade": debtor.city,
             "uf": debtor.state,
         },
         "dividas": debts_payload,
+        "historico_contatos": [
+            {
+                "canal": i.channel,
+                "resultado": i.result,
+                "observacao": i.notes,
+                "em": i.created_at.isoformat() if i.created_at else None,
+            }
+            for i in interactions
+        ],
         "consentimentos": [
             {
                 "finalidade": c.purpose,
@@ -80,8 +98,17 @@ def anonymize_debtor(db: Session, debtor: Debtor) -> None:
     debtor.document = f"ANON{token}"
     debtor.email = None
     debtor.phone = None
+    debtor.phone_alt = None
+    debtor.birth_date = None
+    debtor.zip_code = None
+    debtor.address = None
+    debtor.neighborhood = None
     debtor.city = None
     debtor.state = None
     debtor.is_anonymized = True
     debtor.anonymized_at = datetime.now(timezone.utc)
+
+    # Anonimiza também o conteúdo livre do histórico de contatos (pode conter PII).
+    for interaction in debtor.interactions:
+        interaction.notes = None
     db.commit()

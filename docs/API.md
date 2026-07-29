@@ -40,6 +40,8 @@ Autenticação: `Authorization: Bearer <token>` (obtido no login). Papéis:
 | POST   | `/debts`       | Cria dívida (com scoring)       |
 | POST   | `/agreements`  | Cria acordo (parcelas/desconto) |
 | POST   | `/payments`    | Registra pagamento              |
+| GET    | `/interactions`| Histórico de contatos/tabulação |
+| POST   | `/interactions`| Registra contato (tabulação)    |
 
 ## Setores
 

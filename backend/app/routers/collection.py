@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.debt import Debt
 from app.models.debtor import Debtor
+from app.models.interaction import Interaction
 from app.models.payment import Payment, PaymentAgreement
 from app.models.user import User
 from app.schemas.collection import (
@@ -18,6 +19,8 @@ from app.schemas.collection import (
     DebtOut,
     DebtorCreate,
     DebtorOut,
+    InteractionCreate,
+    InteractionOut,
     PaymentCreate,
     PaymentOut,
 )
@@ -155,3 +158,50 @@ def register_payment(
     audit.record(db, action="payment.create", entity="payment", entity_id=payment.id,
                  actor=actor, request=request, detail=f"amount={payload.amount}")
     return payment
+
+
+# ── Interações / Tabulação ───────────────────────────────────────────────
+@router.get("/interactions", response_model=list[InteractionOut])
+def list_interactions(
+    debtor_id: int | None = None,
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    stmt = select(Interaction)
+    if debtor_id:
+        stmt = stmt.where(Interaction.debtor_id == debtor_id)
+    stmt = stmt.order_by(Interaction.created_at.desc()).limit(limit)
+    return db.scalars(stmt).all()
+
+
+@router.post(
+    "/interactions", response_model=InteractionOut, status_code=status.HTTP_201_CREATED
+)
+def create_interaction(
+    payload: InteractionCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    debtor = db.get(Debtor, payload.debtor_id)
+    if not debtor:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Devedor não encontrado.")
+    if payload.debt_id and not db.get(Debt, payload.debt_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Dívida não encontrada.")
+
+    interaction = Interaction(**payload.model_dump(), created_by=actor.id)
+    # Consolida a situação de contato do titular com a última tabulação.
+    debtor.contact_status = payload.result
+    # Promessa de pagamento move a dívida para negociação.
+    if payload.result in ("promessa", "cpca") and payload.debt_id:
+        debt = db.get(Debt, payload.debt_id)
+        if debt and debt.status in ("pendente", "negociacao"):
+            debt.status = "negociacao"
+    db.add(interaction)
+    db.commit()
+    db.refresh(interaction)
+    audit.record(db, action="interaction.create", entity="interaction",
+                 entity_id=interaction.id, actor=actor, request=request,
+                 detail=f"result={payload.result}")
+    return interaction
