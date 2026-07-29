@@ -16,9 +16,12 @@ Autenticação: `Authorization: Bearer <token>` (obtido no login). Papéis:
 
 | Método | Rota      | Acesso   | Descrição                         |
 | ------ | --------- | -------- | --------------------------------- |
-| POST   | `/login`  | público  | Login via JSON `{email, password}`|
-| POST   | `/token`  | público  | Login OAuth2 (Swagger Authorize)  |
-| GET    | `/me`     | autenticado | Usuário corrente               |
+| POST   | `/login`      | público     | Login via JSON `{email, password}` (retorna access + refresh) |
+| POST   | `/token`      | público     | Login OAuth2 (Swagger Authorize)  |
+| POST   | `/refresh`    | público     | Troca o refresh token por novo par (rotação) |
+| POST   | `/logout`     | público     | Revoga o refresh token (logout com revogação) |
+| POST   | `/logout-all` | autenticado | Revoga todas as sessões do usuário |
+| GET    | `/me`         | autenticado | Usuário corrente                  |
 
 ## Usuários — `/api/users`
 

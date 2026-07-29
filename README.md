@@ -20,7 +20,7 @@ conectados e **conformidade LGPD** integrada.
 | **Auth**       | JWT (OAuth2) + bcrypt + RBAC hierárquico          |
 | **Migrations** | Alembic (schema versionado, validado em PostgreSQL) |
 | **Infra**      | Docker + docker-compose + nginx + CI (GitHub Actions) |
-| **Testes**     | pytest (22 testes: API, RBAC, LGPD, segurança, migrations) |
+| **Testes**     | pytest (29 testes: API, RBAC, LGPD, segurança, sessões, migrations) |
 
 ### Setores da plataforma
 
@@ -88,7 +88,7 @@ Abra <http://localhost:5173>.
 
 ```bash
 cd backend
-python -m pytest            # 15 testes: auth, cobrança, RBAC e LGPD
+python -m pytest            # 29 testes: auth, sessões, cobrança, RBAC, LGPD, segurança, migrations
 
 cd ../frontend
 npm run build               # type-check (tsc) + build de produção
@@ -111,6 +111,7 @@ Veja **[docs/LGPD.md](docs/LGPD.md)** para o detalhamento por artigo. Destaques:
 - **Minimização de dados** — documentos exibidos sempre mascarados
 - **Criptografia de CPF/CNPJ em repouso** (Fernet) com busca por índice cego
 - **Proteção de login** contra brute-force + validação de segredos em produção
+- **Sessões com refresh token revogável** (logout e logout-all com revogação real)
 
 ---
 

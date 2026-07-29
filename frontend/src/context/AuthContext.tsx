@@ -5,7 +5,13 @@ import {
   useState,
   ReactNode,
 } from "react";
-import { api, setToken, getToken } from "../api/client";
+import {
+  api,
+  setToken,
+  getToken,
+  setRefreshToken,
+  getRefreshToken,
+} from "../api/client";
 
 export interface CurrentUser {
   id: number;
@@ -50,17 +56,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function login(email: string, password: string) {
-    const res = await api.post<{ access_token: string }>(
+    const res = await api.post<{ access_token: string; refresh_token?: string }>(
       "/auth/login",
       { email, password },
       false
     );
     setToken(res.access_token);
+    if (res.refresh_token) setRefreshToken(res.refresh_token);
     setUser(await api.get<CurrentUser>("/auth/me"));
   }
 
-  function logout() {
+  async function logout() {
+    const refresh = getRefreshToken();
+    if (refresh) {
+      // Revoga a sessão no servidor (best-effort).
+      try {
+        await api.post("/auth/logout", { refresh_token: refresh }, false);
+      } catch {
+        /* ignora falhas de rede no logout */
+      }
+    }
     setToken(null);
+    setRefreshToken(null);
     setUser(null);
   }
 

@@ -43,6 +43,9 @@ class Settings:
         self.ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
             os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480")
         )
+        self.REFRESH_TOKEN_EXPIRE_DAYS: int = int(
+            os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "14")
+        )
         # Custo do hashing bcrypt (rounds). 12 é um bom padrão de produção.
         self.BCRYPT_ROUNDS: int = int(os.getenv("BCRYPT_ROUNDS", "12"))
 

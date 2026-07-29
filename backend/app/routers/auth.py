@@ -14,8 +14,14 @@ from app.core.deps import get_current_user
 from app.core import ratelimit
 from app.core.security import create_access_token, verify_password
 from app.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse, TokenUser
-from app.services import audit
+from app.schemas.auth import (
+    LoginRequest,
+    LogoutRequest,
+    RefreshRequest,
+    TokenResponse,
+    TokenUser,
+)
+from app.services import audit, sessions
 
 router = APIRouter(prefix="/api/auth", tags=["Autenticação"])
 
@@ -73,12 +79,56 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     """Login via JSON (usado pelo front-end)."""
     user = _authenticate(db, payload.email, payload.password, request)
     token = create_access_token(user.id, {"role": user.role})
+    refresh = sessions.issue_refresh_token(
+        db, user.id, request.headers.get("user-agent")
+    )
     audit.record(db, action="auth.login", entity="user", entity_id=user.id,
                  actor=user, request=request)
     return TokenResponse(
         access_token=token,
+        refresh_token=refresh,
         expires_in_minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES,
     )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get_db)):
+    """Troca um refresh token válido por um novo par (rotação segura)."""
+    record = sessions.get_valid_token(db, payload.refresh_token)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token inválido ou expirado.",
+        )
+    user = db.get(User, record.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Usuário inválido.")
+    new_refresh = sessions.rotate(db, record)
+    access = create_access_token(user.id, {"role": user.role})
+    return TokenResponse(
+        access_token=access,
+        refresh_token=new_refresh,
+        expires_in_minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(payload: LogoutRequest, request: Request, db: Session = Depends(get_db)):
+    """Revoga o refresh token informado (logout com revogação server-side)."""
+    sessions.revoke(db, payload.refresh_token)
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+def logout_all(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Revoga todas as sessões ativas do usuário atual."""
+    count = sessions.revoke_all_for_user(db, user.id)
+    audit.record(db, action="auth.logout_all", entity="user", entity_id=user.id,
+                 actor=user, request=request, detail=f"revoked={count}")
 
 
 @router.post("/token", response_model=TokenResponse)

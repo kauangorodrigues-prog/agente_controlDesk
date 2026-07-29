@@ -1,6 +1,7 @@
 // Cliente HTTP central. Injeta o token JWT e trata erros de forma uniforme.
 
 const TOKEN_KEY = "controldesk_token";
+const REFRESH_KEY = "controldesk_refresh";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -11,6 +12,15 @@ export function setToken(token: string | null) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_KEY);
+}
+
+export function setRefreshToken(token: string | null) {
+  if (token) localStorage.setItem(REFRESH_KEY, token);
+  else localStorage.removeItem(REFRESH_KEY);
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -19,21 +29,64 @@ export class ApiError extends Error {
   }
 }
 
+async function rawFetch(
+  method: string,
+  path: string,
+  body: unknown,
+  auth: boolean
+): Promise<Response> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (auth && token) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(`/api${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+// Tenta renovar o access token usando o refresh token. Retorna true se OK.
+let refreshing: Promise<boolean> | null = null;
+async function tryRefresh(): Promise<boolean> {
+  const refresh = getRefreshToken();
+  if (!refresh) return false;
+  if (!refreshing) {
+    refreshing = (async () => {
+      try {
+        const resp = await fetch("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refresh }),
+        });
+        if (!resp.ok) return false;
+        const data = await resp.json();
+        setToken(data.access_token);
+        if (data.refresh_token) setRefreshToken(data.refresh_token);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshing = null;
+      }
+    })();
+  }
+  return refreshing;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
   auth = true
 ): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getToken();
-  if (auth && token) headers["Authorization"] = `Bearer ${token}`;
+  let resp = await rawFetch(method, path, body, auth);
 
-  const resp = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // Access token expirado: tenta renovar uma vez de forma transparente.
+  if (resp.status === 401 && auth && !path.startsWith("/auth/")) {
+    if (await tryRefresh()) {
+      resp = await rawFetch(method, path, body, auth);
+    }
+  }
 
   if (resp.status === 204) return undefined as T;
 
