@@ -270,6 +270,8 @@ def seed_lgpd_requests(db) -> None:
         db.add(DataSubjectRequest(
             debtor_id=debtor.id if debtor else None,
             requester_document=debtor.document if debtor else _cpf(rng),
+            requester_email=debtor.email if debtor else None,
+            identity_verified=bool(debtor),
             request_type=rtype,
             status=status_,
             notes=note,

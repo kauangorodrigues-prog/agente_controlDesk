@@ -124,9 +124,21 @@ def open_request(payload: DSRCreate, request: Request, db: Session = Depends(get
         select(Debtor).where(Debtor.document_hash == blind_index(document))
     )
 
+    # Verificação de identidade (leve): o e-mail informado deve conferir com o
+    # cadastro do titular. Requisições não verificadas exigem conferência manual
+    # antes de qualquer ação sobre os dados.
+    identity_verified = bool(
+        debtor
+        and payload.requester_email
+        and debtor.email
+        and debtor.email.strip().lower() == payload.requester_email.strip().lower()
+    )
+
     dsr = DataSubjectRequest(
         debtor_id=debtor.id if debtor else None,
         requester_document=document,
+        requester_email=payload.requester_email,
+        identity_verified=identity_verified,
         request_type=payload.request_type,
         notes=payload.notes,
     )
@@ -134,7 +146,8 @@ def open_request(payload: DSRCreate, request: Request, db: Session = Depends(get
     db.commit()
     db.refresh(dsr)
     audit.record(db, action="dsr.open", entity="dsr", entity_id=dsr.id,
-                 request=request, detail=payload.request_type)
+                 request=request,
+                 detail=f"{payload.request_type} verificado={identity_verified}")
     return dsr
 
 

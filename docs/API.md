@@ -11,6 +11,10 @@ Autenticação: `Authorization: Bearer <token>` (obtido no login). Papéis:
 | ------ | --------- | -------------------- |
 | GET    | `/`       | Metadados do serviço |
 | GET    | `/health` | Health check         |
+| GET    | `/metrics`| Métricas operacionais (uptime, volume, latência) |
+
+> Toda resposta inclui os cabeçalhos `X-Request-ID` (correlação de logs) e
+> `X-Response-Time-ms`. Envie `X-Request-ID` para propagar um ID próprio.
 
 ## Autenticação — `/api/auth`
 

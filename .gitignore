@@ -228,3 +228,7 @@ frontend/dist/
 .env
 backend/.env
 frontend/.env
+
+# Correção: o padrão "lib/" (packaging Python) não deve ignorar o código do front-end
+!frontend/src/lib/
+!frontend/src/lib/**

@@ -52,6 +52,11 @@ Tipos: `acesso`, `correcao`, `exclusao`, `portabilidade`, `anonimizacao`,
 (`GET/PATCH /api/lgpd/requests`) com controle de status
 (`recebida → em_analise → concluida/recusada`).
 
+**Verificação de identidade**: ao abrir a requisição, o titular informa o
+e-mail; o sistema compara com o cadastro e marca `identity_verified`.
+Requisições não verificadas devem passar por conferência manual de identidade
+antes de qualquer ação sobre os dados — evitando divulgação indevida a terceiros.
+
 ### Acesso e portabilidade (art. 18, II e V)
 
 `GET /api/lgpd/export/{debtor_id}` gera relatório estruturado com todos os dados

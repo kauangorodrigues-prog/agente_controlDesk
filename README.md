@@ -20,7 +20,8 @@ conectados e **conformidade LGPD** integrada.
 | **Auth**       | JWT (OAuth2) + bcrypt + RBAC hierárquico          |
 | **Migrations** | Alembic (schema versionado, validado em PostgreSQL) |
 | **Infra**      | Docker + docker-compose + nginx + CI (GitHub Actions) |
-| **Testes**     | pytest (29 testes: API, RBAC, LGPD, segurança, sessões, migrations) |
+| **Testes**     | pytest (33 backend) + Vitest (8 frontend), rodando na CI |
+| **Observabilidade** | request-id por requisição, logs estruturados, endpoint `/metrics` |
 
 ### Setores da plataforma
 
@@ -88,9 +89,10 @@ Abra <http://localhost:5173>.
 
 ```bash
 cd backend
-python -m pytest            # 29 testes: auth, sessões, cobrança, RBAC, LGPD, segurança, migrations
+python -m pytest            # 33 testes: auth, sessões, cobrança, RBAC, LGPD, segurança, observabilidade, migrations
 
 cd ../frontend
+npm run test                # 8 testes (Vitest): lógica de RBAC e componentes
 npm run build               # type-check (tsc) + build de produção
 ```
 

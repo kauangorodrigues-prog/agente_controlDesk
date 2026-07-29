@@ -51,6 +51,33 @@ def test_dsr_can_be_opened_publicly(client):
     assert resp.json()["status"] == "recebida"
 
 
+def test_dsr_identity_verified_when_email_matches(client, auth_headers):
+    # cria titular com e-mail conhecido (documento exclusivo deste teste)
+    debtor = client.post(
+        "/api/collection/debtors",
+        headers=auth_headers,
+        json={"full_name": "Titular Verificado", "document": "800.123.999-11",
+              "email": "verificado@example.com"},
+    ).json()
+
+    match = client.post(
+        "/api/lgpd/requests",
+        json={"requester_document": "80012399911", "request_type": "acesso",
+              "requester_email": "verificado@example.com"},
+    )
+    assert match.status_code == 201
+    assert match.json()["identity_verified"] is True
+
+    mismatch = client.post(
+        "/api/lgpd/requests",
+        json={"requester_document": "80012399911", "request_type": "acesso",
+              "requester_email": "outro@example.com"},
+    )
+    assert mismatch.status_code == 201
+    assert mismatch.json()["identity_verified"] is False
+    assert debtor["id"]
+
+
 def test_anonymize_flow(client, auth_headers):
     debtor = client.post(
         "/api/collection/debtors",

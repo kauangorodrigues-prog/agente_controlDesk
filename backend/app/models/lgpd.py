@@ -48,6 +48,9 @@ class DataSubjectRequest(Base):
         ForeignKey("debtors.id", ondelete="SET NULL"), index=True
     )
     requester_document: Mapped[str] = mapped_column(String(20), index=True)
+    requester_email: Mapped[str | None] = mapped_column(String(180))
+    # Verificação de identidade: e-mail informado confere com o cadastro do titular.
+    identity_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # acesso | correcao | exclusao | portabilidade | anonimizacao | revogacao
     request_type: Mapped[str] = mapped_column(String(20), nullable=False)
     # recebida | em_analise | concluida | recusada

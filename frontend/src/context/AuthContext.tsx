@@ -12,6 +12,7 @@ import {
   setRefreshToken,
   getRefreshToken,
 } from "../api/client";
+import { canAccessSector, hasMinRole as hasMinRoleFn, Role } from "../lib/roles";
 
 export interface CurrentUser {
   id: number;
@@ -29,12 +30,6 @@ interface AuthState {
   hasSector: (sector: string) => boolean;
   hasMinRole: (role: "diretoria" | "gerencia" | "administracao") => boolean;
 }
-
-const ROLE_LEVEL: Record<string, number> = {
-  administracao: 1,
-  gerencia: 2,
-  diretoria: 3,
-};
 
 const AuthContext = createContext<AuthState>({} as AuthState);
 
@@ -82,10 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const hasSector = (sector: string) =>
-    !!user && (user.role === "diretoria" || user.sectors.includes(sector));
+    canAccessSector(user?.role, user?.sectors ?? [], sector);
 
-  const hasMinRole = (role: "diretoria" | "gerencia" | "administracao") =>
-    !!user && ROLE_LEVEL[user.role] >= ROLE_LEVEL[role];
+  const hasMinRole = (role: Role) => hasMinRoleFn(user?.role, role);
 
   return (
     <AuthContext.Provider

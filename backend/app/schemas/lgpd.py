@@ -46,6 +46,7 @@ class DSRCreate(BaseModel):
     """Data Subject Request — pode ser aberta pelo próprio titular."""
 
     requester_document: str = Field(min_length=11, max_length=20)
+    requester_email: str | None = None
     request_type: str
     notes: str | None = None
 
@@ -60,6 +61,8 @@ class DSROut(BaseModel):
     id: int
     debtor_id: int | None
     requester_document: str
+    requester_email: str | None
+    identity_verified: bool
     request_type: str
     status: str
     notes: str | None

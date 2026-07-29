@@ -78,5 +78,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Instalar dependências
         run: npm ci
+      - name: Testes (Vitest)
+        run: npm run test
       - name: Build (inclui type-check)
         run: npm run build

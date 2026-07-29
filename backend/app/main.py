@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,6 +11,12 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.observability import (
+    RequestIdFilter,
+    metrics,
+    new_request_id,
+    request_id_ctx,
+)
 from app.routers import (
     auth,
     collection,
@@ -25,8 +32,11 @@ from app.routers import (
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname)s | %(name)s | req=%(request_id)s | %(message)s",
 )
+# Injeta o request_id em todos os logs (correlação de requisições).
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(RequestIdFilter())
 logger = logging.getLogger("controldesk")
 
 
@@ -63,10 +73,20 @@ app.add_middleware(
 )
 
 
-# Cabeçalhos de segurança básicos em todas as respostas.
+# Request-id, timing, métricas e cabeçalhos de segurança em todas as respostas.
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    response = await call_next(request)
+    request_id = request.headers.get("X-Request-ID") or new_request_id()
+    token = request_id_ctx.set(request_id)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_ctx.reset(token)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    metrics.observe(request.method, response.status_code, elapsed_ms)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -99,6 +119,12 @@ def root():
 @app.get("/health", tags=["Sistema"])
 def health():
     return {"status": "ok", "version": settings.APP_VERSION}
+
+
+@app.get("/metrics", tags=["Sistema"])
+def get_metrics():
+    """Métricas operacionais agregadas (uptime, volume, latência)."""
+    return {"app": settings.APP_NAME, **metrics.snapshot()}
 
 
 # ── Registro dos routers ─────────────────────────────────────────────────

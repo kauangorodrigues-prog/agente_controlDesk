@@ -9,6 +9,7 @@ interface DSR {
   requester_document: string;
   request_type: string;
   status: string;
+  identity_verified: boolean;
   created_at: string;
 }
 interface AuditLog {
@@ -83,6 +84,7 @@ export default function LGPD() {
             <tr>
               <th>Documento</th>
               <th>Tipo</th>
+              <th>Identidade</th>
               <th>Status</th>
               <th>Ação</th>
             </tr>
@@ -93,6 +95,9 @@ export default function LGPD() {
                 <td className="muted">{r.requester_document}</td>
                 <td>
                   <Badge value={r.request_type} />
+                </td>
+                <td>
+                  <Badge value={r.identity_verified ? "verificada" : "nao_verificada"} />
                 </td>
                 <td>
                   <Badge value={r.status} />
@@ -115,7 +120,7 @@ export default function LGPD() {
             ))}
             {!requests.data?.length && (
               <tr>
-                <td colSpan={4} className="muted">
+                <td colSpan={5} className="muted">
                   Nenhuma requisição registrada.
                 </td>
               </tr>
