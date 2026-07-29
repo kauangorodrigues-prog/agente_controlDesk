@@ -18,8 +18,9 @@ conectados e **conformidade LGPD** integrada.
 | **API/Back-end** | FastAPI + SQLAlchemy 2 + Pydantic v2 (Python 3.11) |
 | **Banco**      | SQLite (dev, zero-config) · PostgreSQL (produção) |
 | **Auth**       | JWT (OAuth2) + bcrypt + RBAC hierárquico          |
-| **Infra**      | Docker + docker-compose + nginx                   |
-| **Testes**     | pytest (15 testes de API, RBAC e LGPD)            |
+| **Migrations** | Alembic (schema versionado, validado em PostgreSQL) |
+| **Infra**      | Docker + docker-compose + nginx + CI (GitHub Actions) |
+| **Testes**     | pytest (22 testes: API, RBAC, LGPD, segurança, migrations) |
 
 ### Setores da plataforma
 
@@ -54,9 +55,13 @@ docker compose up --build
 ```bash
 cd backend
 pip install -r requirements.txt
-python -m app.seed        # cria o banco + dados de demonstração
+alembic upgrade head      # aplica as migrations (schema)
+python -m app.seed        # popula dados de demonstração
 uvicorn app.main:app --reload
 ```
+
+> Em desenvolvimento com SQLite, `python -m app.seed` também cria o schema
+> automaticamente. Em produção/PostgreSQL, use sempre `alembic upgrade head`.
 
 **2. Front-end** (porta 5173, com proxy para a API)
 

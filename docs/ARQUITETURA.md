@@ -60,7 +60,10 @@ Forecast · Goal · Incident · SystemHealthCheck · Feature · Deployment · Au
 
 - **SQLite por padrão** para permitir `git clone → rodar → testar` sem
   dependências externas; a mesma camada ORM roda em **PostgreSQL** apenas
-  trocando `DATABASE_URL`.
+  trocando `DATABASE_URL` (validado em CI com um serviço PostgreSQL real).
+- **Alembic** versiona o schema. `alembic check` roda nos testes e na CI para
+  impedir _drift_ entre os modelos ORM e as migrations. O tipo customizado
+  `EncryptedStr` é renderizado corretamente nas migrations via `render_item`.
 - **RBAC hierárquico + por setor** separa cargo (poder) de área (escopo).
 - **Scoring heurístico explicável** (não caixa-preta), alinhado ao princípio de
   transparência da LGPD.
