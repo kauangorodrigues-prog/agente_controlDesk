@@ -56,12 +56,12 @@ _TRUST_PROXY = os.getenv("ROBO_ALO_TRUST_PROXY", "false").lower() in ("1", "true
 _CALL_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,128}$")  # sem pontos/barras (anti path-traversal)
 
 try:
-    from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+    from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel
 
-    from . import alo_store
+    from . import alo_store, alo_transcricao
     from .alo_analyzer import ANALISADOR
     from .alo_service import AloService
 
@@ -169,12 +169,18 @@ try:
             "modo": CFG.ALO_MODO,
             "modelo_ia": CFG.ANTHROPIC_MODEL,
             "ia_disponivel": _ia_disponivel(),
-            "hibrido_limiar": CFG.ALO_HIBRIDO_LIMIAR,
+            "transcricao_disponivel": alo_transcricao.disponivel(),
+            "faixas_decisao": {
+                "automatica": f">= {CFG.ALO_LIMIAR_AUTO}",
+                "revisar_ia": f"{CFG.ALO_LIMIAR_HUMANO}-{CFG.ALO_LIMIAR_AUTO - 1}",
+                "auditoria_humana": f"< {CFG.ALO_LIMIAR_HUMANO}",
+            },
             "autenticacao": "obrigatória — header X-API-Key nas rotas /alo/*",
             "persistencia": _backend_persistencia(),
             "endpoints": [
                 "POST /alo/analisar        (uma ligação, resposta imediata)",
                 "POST /alo/lote            (lote de ligações no corpo, persiste)",
+                "POST /alo/audio           (upload de gravação .mp3/.wav → transcreve e analisa)",
                 "GET  /alo/call/{call_id}  (puxa do discador Olos)",
                 "POST /alo/processar       (puxa lote recente do Olos)",
                 "GET  /alo/historico",
@@ -205,6 +211,30 @@ try:
         return AloService.processar_payload(
             body.chamadas, persistir=body.persistir, usar_ia=body.usar_ia, modo=body.modo
         )
+
+    @app.post("/alo/audio", tags=["ALO"], dependencies=_AUTH)
+    async def analisar_audio(
+        arquivo: UploadFile = File(...), persistir: bool = Query(True),
+        usar_ia: Optional[bool] = Query(None), modo: Optional[str] = Query(None),
+    ):
+        if not alo_transcricao.disponivel():
+            raise HTTPException(
+                status_code=501,
+                detail="Transcrição indisponível — instale requirements-transcricao.txt "
+                       "ou envie a transcrição via /alo/lote.",
+            )
+        import tempfile
+        nome = os.path.basename(arquivo.filename or "audio.mp3")
+        with tempfile.NamedTemporaryFile(suffix="_" + nome, delete=False) as tmp:
+            tmp.write(await arquivo.read())
+            caminho = tmp.name
+        try:
+            return AloService.analisar_audio(caminho, persistir=persistir, usar_ia=usar_ia, modo=modo)
+        finally:
+            try:
+                os.unlink(caminho)
+            except OSError:
+                pass
 
     @app.get("/alo/call/{call_id}", tags=["ALO"], dependencies=_AUTH)
     def analisar_call(

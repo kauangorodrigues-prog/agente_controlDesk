@@ -257,6 +257,9 @@ class AnaliseResultado:
     falso_negativo_alo: bool = False
     origem: str = "heuristica"  # "ia" | "heuristica"
     escalado_para_ia: bool = False  # no modo híbrido, indica se a IA foi acionada
+    # Faixa de decisão (política de acurácia): automatica | revisar_ia | auditoria_humana
+    decisao: str = "revisar_ia"
+    requer_consolidacao_humana: bool = False  # feed de decisão financeira/contratual
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -727,10 +730,34 @@ def _resolver_modo(modo: Optional[str], usar_ia: Optional[bool]) -> str:
     return m if m in MODOS else MODO_HIBRIDO
 
 
+# Classificações que alimentam decisão financeira/contratual (ex.: glosa de
+# operadora) — sempre marcadas para consolidação humana por amostragem.
+_CLASSES_FINANCEIRAS = {OPERADORA, MUDO, RUIDO}
+
+
+def _limiares() -> tuple[int, int]:
+    return int(getattr(CFG, "ALO_LIMIAR_AUTO", 90)), int(getattr(CFG, "ALO_LIMIAR_HUMANO", 70))
+
+
 def _deve_escalar(heur: AnaliseResultado) -> bool:
-    """No modo híbrido, decide se a ligação é 'duvidosa' e merece a IA."""
-    limiar = int(getattr(CFG, "ALO_HIBRIDO_LIMIAR", 80))
-    return heur.classificacao == OUTRO or heur.grau_confianca < limiar
+    """No modo híbrido, aciona a IA na faixa intermediária (HUMANO ≤ conf < AUTO)
+    ou quando a classificação é inconclusiva (OUTRO)."""
+    auto, humano = _limiares()
+    return heur.classificacao == OUTRO or (humano <= heur.grau_confianca < auto)
+
+
+def _finalizar(r: AnaliseResultado) -> AnaliseResultado:
+    """Aplica a política de faixas de decisão ao resultado (qualquer modo)."""
+    auto, humano = _limiares()
+    if r.grau_confianca >= auto:
+        r.decisao = "automatica"
+    elif r.grau_confianca >= humano:
+        r.decisao = "revisar_ia"
+    else:
+        r.decisao = "auditoria_humana"
+    if r.classificacao in _CLASSES_FINANCEIRAS:
+        r.requer_consolidacao_humana = True
+    return r
 
 
 # ── API pública ─────────────────────────────────────────────────────────────
@@ -754,22 +781,22 @@ class AnalisadorLigacao:
         m = _resolver_modo(modo, usar_ia)
 
         if m == MODO_HEURISTICA:
-            return _analisar_heuristica(lig)
+            return _finalizar(_analisar_heuristica(lig))
 
         if m == MODO_IA:
             resultado = _analisar_ia(lig)
-            return resultado if resultado is not None else _analisar_heuristica(lig)
+            return _finalizar(resultado if resultado is not None else _analisar_heuristica(lig))
 
-        # Híbrido: heurística primeiro; IA só nas duvidosas.
+        # Híbrido: heurística primeiro; IA só nas duvidosas (faixa intermediária).
         heur = _analisar_heuristica(lig)
         if not _deve_escalar(heur) or not _ia_disponivel():
-            return heur
+            return _finalizar(heur)
         resultado = _analisar_ia(lig)
         if resultado is not None:
             resultado.escalado_para_ia = True
-            return resultado
+            return _finalizar(resultado)
         heur.escalado_para_ia = True  # tentou a IA, mas ela falhou — mantém a heurística
-        return heur
+        return _finalizar(heur)
 
     @staticmethod
     def analisar_dict(

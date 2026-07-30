@@ -39,10 +39,23 @@ class Config:
         self.ANTHROPIC_MODEL   = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
         # Modo de análise: heuristica | ia | hibrido (padrão).
         self.ALO_MODO          = os.getenv("ALO_MODO", "hibrido").strip().lower()
-        # No híbrido, ligações com confiança abaixo deste limiar vão para a IA.
+        # Faixas de decisão (política de acurácia):
+        #   confiança >= AUTO           -> classificação automática
+        #   HUMANO <= confiança < AUTO  -> revisão híbrida/IA
+        #   confiança < HUMANO          -> auditoria humana
+        self.ALO_LIMIAR_AUTO   = int(os.getenv("ALO_LIMIAR_AUTO", "90"))
+        self.ALO_LIMIAR_HUMANO = int(os.getenv("ALO_LIMIAR_HUMANO", "70"))
+        # Compat.: limiar antigo de um só ponto (ainda lido; a política acima manda).
         self.ALO_HIBRIDO_LIMIAR = int(os.getenv("ALO_HIBRIDO_LIMIAR", "80"))
-        # Compat.: mantido para exibição; o modo é a fonte de verdade.
         self.ALO_USAR_IA       = os.getenv("ALO_USAR_IA", "true").lower() == "true"
+
+        # ── Transcrição de áudio (opcional; áudio -> texto p/ o robô) ────────
+        self.ALO_WHISPER_MODEL   = os.getenv("ALO_WHISPER_MODEL", "small")
+        self.ALO_WHISPER_DEVICE  = os.getenv("ALO_WHISPER_DEVICE", "cpu")
+        self.ALO_WHISPER_COMPUTE = os.getenv("ALO_WHISPER_COMPUTE", "int8")
+        self.ALO_WHISPER_IDIOMA  = os.getenv("ALO_WHISPER_IDIOMA", "pt")
+        # Diretório local do modelo (para redes sem acesso ao HuggingFace).
+        self.ALO_WHISPER_MODEL_DIR = os.getenv("ALO_WHISPER_MODEL_DIR", "")
 
         # ── JWT (API) ─────────────────────────────────────────
         self.JWT_SECRET_KEY     = os.getenv("JWT_SECRET_KEY", "TROQUE_EM_PRODUCAO")

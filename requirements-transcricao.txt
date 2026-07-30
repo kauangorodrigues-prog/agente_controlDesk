@@ -1,0 +1,10 @@
+# Transcrição de áudio (opcional) — habilita a rota POST /alo/audio e o
+# processamento de gravações .mp3/.wav. Instale SÓ se o robô for transcrever
+# o áudio localmente (se o discador já entrega transcrição, não é necessário).
+#
+#   pip install -r requirements-transcricao.txt
+#
+# faster-whisper traz o decodificador de áudio embutido (via av/PyAV), sem
+# depender do ffmpeg do sistema. O modelo é baixado do HuggingFace no primeiro
+# uso; em redes restritas, baixe antes e aponte ALO_WHISPER_MODEL_DIR. Ver TRANSCRICAO.md.
+faster-whisper

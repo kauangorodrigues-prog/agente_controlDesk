@@ -13,7 +13,9 @@ em lote ainda roda e devolve os resultados (apenas não persiste).
 """
 from __future__ import annotations
 
+import glob
 import json
+import os
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -152,6 +154,78 @@ class AloService:
         out = resultado.to_dict()
         out["call_id"] = cid
         return out
+
+    # ── Áudio → transcrição → análise ──────────────────────────────────────
+    @staticmethod
+    def analisar_audio(
+        caminho: str, persistir: bool = True, usar_ia: Optional[bool] = None,
+        modo: Optional[str] = None,
+    ) -> dict:
+        """Transcreve uma gravação (.mp3/.wav), analisa e (opcional) persiste.
+
+        Requer o motor de transcrição (``requirements-transcricao.txt``).
+        """
+        from . import alo_transcricao as tr
+        meta = tr.parse_nome_gravacao(caminho)
+        dur = tr.duracao_mp3(caminho) if caminho.lower().endswith(".mp3") else 0.0
+        texto = tr.transcrever(caminho)
+        lig = Ligacao(
+            numero_chamado=meta["numero_chamado"], data=meta["data"], hora=meta["hora"],
+            duracao_total_seg=dur, transcricao=texto,
+            # Sem fala detectada em uma gravação com áudio → sinal de MUDO.
+            tempo_silencio_seg=dur if (dur and not texto) else 0.0,
+        )
+        cid = meta["call_id"]
+        r = ANALISADOR.analisar(lig, modo=modo, usar_ia=usar_ia)
+        if persistir:
+            _persistir(cid, lig, r)
+        out = r.to_dict()
+        out["call_id"] = cid
+        out["duracao_seg"] = dur
+        out["transcricao"] = texto
+        return out
+
+    @staticmethod
+    def processar_pasta(
+        diretorio: str, persistir: bool = True, usar_ia: Optional[bool] = None,
+        modo: Optional[str] = None,
+    ) -> dict:
+        """Transcreve e analisa todas as gravações de uma pasta."""
+        arquivos = sorted(
+            f for ext in ("*.mp3", "*.wav", "*.ogg", "*.m4a")
+            for f in glob.glob(os.path.join(diretorio, ext))
+        )
+        resumo = {
+            "processadas": 0, "persistidas": 0, "alo": 0, "nao_alo": 0,
+            "por_classificacao": {}, "por_decisao": {}, "arquivos": len(arquivos),
+            "backend": alo_store.backend(), "ts": datetime.utcnow().isoformat(),
+        }
+        detalhes = []
+        for caminho in arquivos:
+            try:
+                out = AloService.analisar_audio(caminho, persistir=persistir, usar_ia=usar_ia, modo=modo)
+            except Exception as e:  # transcrição indisponível / erro por arquivo
+                log.error(f"Falha ao analisar {os.path.basename(caminho)}: {e}")
+                resumo.setdefault("erros", 0)
+                resumo["erros"] += 1
+                continue
+            resumo["processadas"] += 1
+            resumo["alo"] += int(out["houve_alo"])
+            resumo["nao_alo"] += int(not out["houve_alo"])
+            resumo["por_classificacao"][out["classificacao"]] = \
+                resumo["por_classificacao"].get(out["classificacao"], 0) + 1
+            resumo["por_decisao"][out["decisao"]] = \
+                resumo["por_decisao"].get(out["decisao"], 0) + 1
+            if persistir:
+                resumo["persistidas"] += 1
+            detalhes.append({
+                "call_id": out["call_id"], "classificacao": out["classificacao"],
+                "houve_alo": out["houve_alo"], "grau_confianca": out["grau_confianca"],
+                "decisao": out["decisao"], "duracao_seg": out.get("duracao_seg"),
+            })
+        resumo["detalhes"] = detalhes
+        log.info(f"ALO áudio: {resumo['processadas']}/{len(arquivos)} gravações analisadas.")
+        return resumo
 
     @staticmethod
     def processar_payload(

@@ -5,6 +5,7 @@ uvicorn[standard]
 pydantic
 requests
 python-dotenv
+python-multipart
 SQLAlchemy>=2.0
 
 # Persistência em Postgres (produção). Sem o driver, o robô usa SQLite local.
