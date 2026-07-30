@@ -122,6 +122,7 @@ Veja **[docs/LGPD.md](docs/LGPD.md)** para o detalhamento por artigo. Destaques:
 - [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — arquitetura e decisões técnicas
 - [docs/LGPD.md](docs/LGPD.md) — conformidade legal detalhada
 - [docs/API.md](docs/API.md) — referência dos endpoints
+- [docs/DEPLOY.md](docs/DEPLOY.md) — deploy em produção (Vercel + Supabase)
 
 ---
 

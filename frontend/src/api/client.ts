@@ -29,6 +29,14 @@ export class ApiError extends Error {
   }
 }
 
+// Base da API. Em dev fica vazio (proxy do Vite trata /api). Em produção,
+// defina VITE_API_URL com a origem do backend (ex.: https://api.exemplo.com).
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+
+function apiUrl(path: string): string {
+  return `${API_BASE}/api${path}`;
+}
+
 async function rawFetch(
   method: string,
   path: string,
@@ -38,7 +46,7 @@ async function rawFetch(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
   if (auth && token) headers["Authorization"] = `Bearer ${token}`;
-  return fetch(`/api${path}`, {
+  return fetch(apiUrl(path), {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -53,7 +61,7 @@ async function tryRefresh(): Promise<boolean> {
   if (!refreshing) {
     refreshing = (async () => {
       try {
-        const resp = await fetch("/api/auth/refresh", {
+        const resp = await fetch(apiUrl("/auth/refresh"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ refresh_token: refresh }),
