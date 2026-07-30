@@ -1,32 +1,42 @@
-"""Rate limiting simples em memória para proteção contra brute-force.
+"""Rate limiting persistente (serverless-safe) para proteção contra brute-force.
 
-Suficiente para uma única instância. Em produção com múltiplas réplicas,
-troque por um backend compartilhado (Redis) mantendo a mesma interface.
+Usa o banco de dados como backend, funcionando corretamente mesmo em ambientes
+serverless com múltiplas invocações isoladas (onde memória não persiste).
 """
 from __future__ import annotations
 
-import threading
-import time
-from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
-_lock = threading.Lock()
-_attempts: dict[str, list[float]] = defaultdict(list)
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
 
-
-def is_locked(key: str, max_attempts: int, window_seconds: int) -> bool:
-    """True se o número de falhas recentes atingiu o limite na janela."""
-    now = time.time()
-    with _lock:
-        recent = [t for t in _attempts[key] if now - t < window_seconds]
-        _attempts[key] = recent
-        return len(recent) >= max_attempts
+from app.models.login_attempt import LoginAttempt
 
 
-def record_failure(key: str) -> None:
-    with _lock:
-        _attempts[key].append(time.time())
+def is_locked(db: Session, key: str, max_attempts: int, window_seconds: int) -> bool:
+    """True se houve >= max_attempts falhas para a chave dentro da janela."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+    count = db.scalar(
+        select(func.count(LoginAttempt.id)).where(
+            LoginAttempt.key == key, LoginAttempt.created_at > cutoff
+        )
+    )
+    return (count or 0) >= max_attempts
 
 
-def reset(key: str) -> None:
-    with _lock:
-        _attempts.pop(key, None)
+def record_failure(db: Session, key: str, window_seconds: int = 3600) -> None:
+    """Registra uma falha e limpa tentativas antigas da mesma chave."""
+    db.add(LoginAttempt(key=key))
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+    db.execute(
+        delete(LoginAttempt).where(
+            LoginAttempt.key == key, LoginAttempt.created_at <= cutoff
+        )
+    )
+    db.commit()
+
+
+def reset(db: Session, key: str) -> None:
+    """Zera as tentativas após login bem-sucedido."""
+    db.execute(delete(LoginAttempt).where(LoginAttempt.key == key))
+    db.commit()

@@ -27,6 +27,7 @@ from app.routers import (
     mis,
     notifications,
     planejamento,
+    system,
     users,
 )
 
@@ -45,7 +46,10 @@ async def lifespan(app: FastAPI):
     logger.info("Iniciando %s v%s (%s)", settings.APP_NAME, settings.APP_VERSION,
                 settings.APP_ENV)
     settings.validate_for_production()  # falha rápido com segredos inseguros
-    init_db()
+    # Em dev/test (SQLite) cria o schema automaticamente; em produção
+    # (PostgreSQL) o schema é gerido pelas migrations Alembic.
+    if settings.is_sqlite:
+        init_db()
     yield
     logger.info("Encerrando aplicação.")
 
@@ -138,3 +142,4 @@ app.include_router(desenvolvimento.router)
 app.include_router(infraestrutura.router)
 app.include_router(notifications.router)
 app.include_router(lgpd.router)
+app.include_router(system.router)

@@ -15,6 +15,7 @@ from app.models.infra import Incident, SystemHealthCheck  # noqa: F401
 from app.models.devops import Feature, Deployment  # noqa: F401
 from app.models.audit import AuditLog  # noqa: F401
 from app.models.lgpd import ConsentRecord, DataSubjectRequest  # noqa: F401
+from app.models.login_attempt import LoginAttempt  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.token import RefreshToken  # noqa: F401
 
@@ -39,4 +40,5 @@ __all__ = [
     "DataSubjectRequest",
     "Notification",
     "RefreshToken",
+    "LoginAttempt",
 ]

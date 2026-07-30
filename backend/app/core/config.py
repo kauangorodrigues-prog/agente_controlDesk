@@ -99,6 +99,9 @@ class Settings:
         self.FIRST_ADMIN_PASSWORD: str = os.getenv(
             "FIRST_ADMIN_PASSWORD", "Admin@123456"
         )
+        # Token para inicialização remota do banco (schema + seed) pós-deploy.
+        # Vazio desabilita o endpoint de bootstrap.
+        self.BOOTSTRAP_TOKEN: str = os.getenv("BOOTSTRAP_TOKEN", "")
 
     @property
     def is_sqlite(self) -> bool:

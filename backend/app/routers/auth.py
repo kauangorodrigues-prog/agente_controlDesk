@@ -39,7 +39,7 @@ def _authenticate(
     # Chave de rate-limit por e-mail + IP (mitiga brute-force sem enumerar usuários).
     rl_key = f"{email}:{_client_ip(request)}"
     if ratelimit.is_locked(
-        rl_key, settings.LOGIN_MAX_ATTEMPTS, settings.LOGIN_LOCKOUT_SECONDS
+        db, rl_key, settings.LOGIN_MAX_ATTEMPTS, settings.LOGIN_LOCKOUT_SECONDS
     ):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -49,7 +49,7 @@ def _authenticate(
 
     user = db.scalar(select(User).where(User.email == email))
     if not user or not verify_password(password, user.hashed_password):
-        ratelimit.record_failure(rl_key)
+        ratelimit.record_failure(db, rl_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha incorretos.",
@@ -58,7 +58,7 @@ def _authenticate(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Usuário inativo."
         )
-    ratelimit.reset(rl_key)
+    ratelimit.reset(db, rl_key)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     return user
