@@ -93,3 +93,8 @@ para desabilitar o endpoint.
   aplicação recusa iniciar com chaves padrão de desenvolvimento.
 - **SMTP** (régua de e-mail): defina `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD` para
   envio real; sem isso, opera em modo simulado.
+- **Runtime Python**: a Vercel usa Python 3.12 por padrão (compatível com o
+  código). O `vercel.json` define `maxDuration: 60` para a função — o bootstrap
+  faz várias inserções pela rede e pode levar ~10–30s na primeira execução.
+- **Cold start**: a primeira requisição após inatividade pode ter latência maior
+  (comportamento normal de serverless).
