@@ -1,0 +1,82 @@
+# Robô Analisador de Ligações ALO / NÃO ALO — produção com HTTPS automático.
+#
+#   1. cp .env.docker.example .env
+#      preencha ROBO_ALO_API_KEY, POSTGRES_PASSWORD e ALO_DOMAIN.
+#   2. docker compose up -d --build
+#   3. teste:
+#        # domínio público (Let's Encrypt automático):
+#        curl -H "X-API-Key: <chave>" https://SEU_DOMINIO/
+#        # local (certificado interno):
+#        curl -k -H "X-API-Key: <chave>" https://localhost/
+#
+# O Caddy obtém e renova o certificado TLS sozinho. O robô fica na rede interna
+# (exposto ao host só em 127.0.0.1:5501 para depuração); o tráfego externo entra
+# pelo Caddy nas portas 80/443. Persistência em Postgres; o robô cria a tabela.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ALO_DOMAIN: "${ALO_DOMAIN:-localhost}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - robo-alo
+
+  robo-alo:
+    build: .
+    image: agente-controldesk-robo-alo:latest
+    restart: always
+    # Exposto só ao próprio host (127.0.0.1) para depuração; o acesso externo é
+    # via Caddy (HTTPS). Para expor direto na rede interna, troque por "5501:5501".
+    ports:
+      - "127.0.0.1:${ROBO_ALO_PORT:-5501}:5501"
+    environment:
+      # Segurança
+      ROBO_ALO_API_KEY: "${ROBO_ALO_API_KEY:?defina ROBO_ALO_API_KEY no .env}"
+      ROBO_ALO_HOST: "0.0.0.0"
+      ROBO_ALO_PORT: "5501"
+      ROBO_ALO_WORKERS: "${ROBO_ALO_WORKERS:-2}"
+      ROBO_ALO_RATE_LIMIT: "${ROBO_ALO_RATE_LIMIT:-120}"
+      ROBO_ALO_CORS_ORIGINS: "${ROBO_ALO_CORS_ORIGINS:-}"
+      ROBO_ALO_TRUST_PROXY: "true"          # atrás do Caddy — usa o IP real (X-Forwarded-For)
+      # Análise
+      ALO_MODO: "${ALO_MODO:-hibrido}"
+      ALO_HIBRIDO_LIMIAR: "${ALO_HIBRIDO_LIMIAR:-80}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
+      # Persistência (Postgres do serviço 'db')
+      POSTGRES_HOST: "db"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB:-alo}"
+      POSTGRES_USER: "${POSTGRES_USER:-alo}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-alo}"
+      POSTGRES_USER: "${POSTGRES_USER:-alo}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}"
+    volumes:
+      - alo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alo} -d ${POSTGRES_DB:-alo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  alo-db:
+  caddy-data:
+  caddy-config:

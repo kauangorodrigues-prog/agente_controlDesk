@@ -1,0 +1,26 @@
+# HTTPS automático na frente do robô ALO (Caddy).
+#
+#   ALO_DOMAIN=ligacoes.suaempresa.com  → certificado Let's Encrypt automático
+#       (requer DNS apontando para o servidor e portas 80/443 abertas).
+#   ALO_DOMAIN=localhost (padrão)        → certificado interno para teste local
+#       (acesse com `curl -k https://localhost/...`).
+#
+# Para receber avisos de expiração de certificado, descomente e preencha:
+# {
+# 	email voce@suaempresa.com
+# }
+
+{$ALO_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# Encaminha para o robô na rede interna do compose. O Caddy adiciona
+	# X-Forwarded-For / X-Forwarded-Proto automaticamente.
+	reverse_proxy robo-alo:5501 {
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+	}
+
+	# Cabeçalho de segurança extra (HSTS) — só efetivo sob HTTPS público.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
