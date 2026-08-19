@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── Projeto ControlDesk Cobranças SaaS ──────────────────────
+# Banco SQLite local
+*.db
+backend/controldesk.db
+# Front-end
+node_modules/
+frontend/dist/
+# Ambiente
+.env
+backend/.env
+frontend/.env
+
+# Correção: o padrão "lib/" (packaging Python) não deve ignorar o código do front-end
+!frontend/src/lib/
+!frontend/src/lib/**

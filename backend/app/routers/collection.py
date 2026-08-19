@@ -1,0 +1,217 @@
+"""Rotas de cobrança: devedores, dívidas, acordos e pagamentos."""
+from __future__ import annotations
+
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
+
+from app.core.crypto import blind_index
+from app.core.database import get_db
+from app.core.deps import get_current_user
+from app.models.debt import Debt
+from app.models.debtor import Debtor
+from app.models.interaction import Interaction
+from app.models.payment import Payment, PaymentAgreement
+from app.models.user import User
+from app.schemas.collection import (
+    AgreementCreate,
+    AgreementOut,
+    DebtCreate,
+    DebtOut,
+    DebtorCreate,
+    DebtorOut,
+    InteractionCreate,
+    InteractionOut,
+    PaymentCreate,
+    PaymentOut,
+)
+from app.services import audit
+from app.services.scoring import recovery_score
+
+router = APIRouter(prefix="/api/collection", tags=["Cobrança"])
+
+
+# ── Devedores ────────────────────────────────────────────────────────────
+@router.get("/debtors", response_model=list[DebtorOut])
+def list_debtors(
+    q: str | None = Query(default=None, description="Busca por nome ou documento"),
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    stmt = select(Debtor)
+    if q:
+        q = q.strip()
+        conds = [Debtor.full_name.ilike(f"%{q}%")]
+        # Documento é cifrado: busca exata via índice cego quando o termo
+        # tiver a quantidade de dígitos de um CPF (11) ou CNPJ (14).
+        digits = re.sub(r"\D", "", q)
+        if len(digits) in (11, 14):
+            conds.append(Debtor.document_hash == blind_index(digits))
+        stmt = stmt.where(or_(*conds))
+    stmt = stmt.order_by(Debtor.full_name).limit(limit)
+    return db.scalars(stmt).all()
+
+
+@router.post("/debtors", response_model=DebtorOut, status_code=status.HTTP_201_CREATED)
+def create_debtor(
+    payload: DebtorCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    data = payload.model_dump()
+    debtor = Debtor(**data, document_hash=blind_index(data["document"]))
+    db.add(debtor)
+    db.commit()
+    db.refresh(debtor)
+    audit.record(db, action="debtor.create", entity="debtor", entity_id=debtor.id,
+                 actor=actor, request=request)
+    return debtor
+
+
+# ── Dívidas ──────────────────────────────────────────────────────────────
+@router.get("/debts", response_model=list[DebtOut])
+def list_debts(
+    portfolio: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    debtor_id: int | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    stmt = select(Debt)
+    if portfolio:
+        stmt = stmt.where(Debt.portfolio == portfolio)
+    if status_filter:
+        stmt = stmt.where(Debt.status == status_filter)
+    if debtor_id:
+        stmt = stmt.where(Debt.debtor_id == debtor_id)
+    return db.scalars(stmt.order_by(Debt.created_at.desc()).limit(500)).all()
+
+
+@router.post("/debts", response_model=DebtOut, status_code=status.HTTP_201_CREATED)
+def create_debt(
+    payload: DebtCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    if not db.get(Debtor, payload.debtor_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Devedor não encontrado.")
+
+    debt = Debt(**payload.model_dump())
+    debt.risk_score = recovery_score(
+        portfolio=debt.portfolio,
+        days_overdue=debt.days_overdue,
+        original_amount=debt.original_amount,
+        current_amount=debt.current_amount,
+    )
+    db.add(debt)
+    db.commit()
+    db.refresh(debt)
+    audit.record(db, action="debt.create", entity="debt", entity_id=debt.id,
+                 actor=actor, request=request, detail=f"portfolio={debt.portfolio}")
+    return debt
+
+
+# ── Acordos ──────────────────────────────────────────────────────────────
+@router.post("/agreements", response_model=AgreementOut, status_code=status.HTTP_201_CREATED)
+def create_agreement(
+    payload: AgreementCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    debt = db.get(Debt, payload.debt_id)
+    if not debt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Dívida não encontrada.")
+
+    net = payload.total_amount * (1 - payload.discount_pct / 100)
+    agreement = PaymentAgreement(
+        debt_id=debt.id,
+        total_amount=payload.total_amount,
+        installments=payload.installments,
+        installment_amount=round(net / payload.installments, 2),
+        discount_pct=payload.discount_pct,
+        created_by=actor.id,
+    )
+    debt.status = "acordo"
+    db.add(agreement)
+    db.commit()
+    db.refresh(agreement)
+    audit.record(db, action="agreement.create", entity="agreement", entity_id=agreement.id,
+                 actor=actor, request=request)
+    return agreement
+
+
+# ── Pagamentos ───────────────────────────────────────────────────────────
+@router.post("/payments", response_model=PaymentOut, status_code=status.HTTP_201_CREATED)
+def register_payment(
+    payload: PaymentCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    debt = db.get(Debt, payload.debt_id)
+    if not debt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Dívida não encontrada.")
+
+    payment = Payment(debt_id=debt.id, amount=payload.amount, method=payload.method)
+    debt.current_amount = max(0.0, debt.current_amount - payload.amount)
+    if debt.current_amount == 0:
+        debt.status = "quitada"
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    audit.record(db, action="payment.create", entity="payment", entity_id=payment.id,
+                 actor=actor, request=request, detail=f"amount={payload.amount}")
+    return payment
+
+
+# ── Interações / Tabulação ───────────────────────────────────────────────
+@router.get("/interactions", response_model=list[InteractionOut])
+def list_interactions(
+    debtor_id: int | None = None,
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    stmt = select(Interaction)
+    if debtor_id:
+        stmt = stmt.where(Interaction.debtor_id == debtor_id)
+    stmt = stmt.order_by(Interaction.created_at.desc()).limit(limit)
+    return db.scalars(stmt).all()
+
+
+@router.post(
+    "/interactions", response_model=InteractionOut, status_code=status.HTTP_201_CREATED
+)
+def create_interaction(
+    payload: InteractionCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    debtor = db.get(Debtor, payload.debtor_id)
+    if not debtor:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Devedor não encontrado.")
+    if payload.debt_id and not db.get(Debt, payload.debt_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Dívida não encontrada.")
+
+    interaction = Interaction(**payload.model_dump(), created_by=actor.id)
+    # Consolida a situação de contato do titular com a última tabulação.
+    debtor.contact_status = payload.result
+    # Promessa de pagamento move a dívida para negociação.
+    if payload.result in ("promessa", "cpca") and payload.debt_id:
+        debt = db.get(Debt, payload.debt_id)
+        if debt and debt.status in ("pendente", "negociacao"):
+            debt.status = "negociacao"
+    db.add(interaction)
+    db.commit()
+    db.refresh(interaction)
+    audit.record(db, action="interaction.create", entity="interaction",
+                 entity_id=interaction.id, actor=actor, request=request,
+                 detail=f"result={payload.result}")
+    return interaction
