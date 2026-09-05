@@ -6,7 +6,7 @@ pydantic[email]==2.10.4
 python-jose[cryptography]==3.3.0
 cryptography==42.0.8
 bcrypt==4.2.1
-python-multipart==0.0.20
+python-multipart==0.0.31
 python-dotenv==1.0.1
 # Banco de dados
 # SQLite é nativo do Python (default em dev).
